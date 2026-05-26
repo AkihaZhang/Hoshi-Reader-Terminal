@@ -56,7 +56,12 @@ def render_page(title: str, page: Page, total_pages: int, vertical: bool = False
     header = style(title, BOLD) + style(f"  第 {page.index + 1}/{total_pages} 页", DIM)
     ruler = style("─" * min(96, max(24, len(header))), CYAN)
     content = render_vertical(page.text) if vertical else page.text
-    footer = style("Enter/n 下一页  p 上一页  /词 查词  a 词 挖矿  h 备注 划线  v 纵书  s 统计  q 退出", DIM)
+    footer = "\n".join(
+        [
+            style("Enter/n 下一页   p 上一页   /词 查词   a 词 挖矿", DIM),
+            style("h 备注/划线     v 纵书     s 统计     q 退出", DIM),
+        ]
+    )
     return "\n".join([header, ruler, content, ruler, footer])
 
 
