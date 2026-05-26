@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+dist/*
+!dist/*.zip
+!dist/*.tar.gz
+build/
+.hoshi-terminal/
+*.pyz
+测试用/

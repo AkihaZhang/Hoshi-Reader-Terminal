@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hoshi-reader-terminal"
+version = "0.1.0"
+description = "A terminal parody of Hoshi Reader that is still useful enough to be dangerous."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Hoshi Reader Terminal contributors" }]
+keywords = ["epub", "reader", "terminal", "japanese", "yomitan", "parody"]
+classifiers = [
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Operating System :: OS Independent",
+  "Topic :: Text Processing",
+]
+
+[project.scripts]
+hoshi = "hoshi_terminal.cli:main"
+hoshi-terminal = "hoshi_terminal.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hoshi_terminal*"]

@@ -1,0 +1,949 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import shutil
+import sys
+import time
+
+from . import __version__
+from .anki import AnkiConnectError, add_note, settings_from_dict, version as ankiconnect_version
+from .dictionary import DictionaryManager, find_yomitan_sources, format_results
+from .epub import extract_book
+from .reader import Page, character_count, page_for_position, paginate, render_page, sentence_around
+from .storage import BookRecord, Library, summarize_text_progress
+from .sync import sync_library
+from .terminal import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, YELLOW, banner, clear_screen, style, terminal_size
+
+
+BOOK_SUFFIXES = {".epub", ".txt", ".md", ".markdown", ".html", ".htm", ".xhtml"}
+SKIP_SCAN_DIRS = {".git", ".venv", "__pycache__", "dist", "build"}
+SKIP_SCAN_FILES = {"readme.md", "readme.zh-cn.md", "license", "install.zh-cn.txt"}
+
+
+ARGPARSE_TRANSLATIONS = {
+    "usage: ": "用法：",
+    "positional arguments": "位置参数",
+    "options": "选项",
+    "optional arguments": "可选参数",
+    "show this help message and exit": "显示帮助信息并退出",
+    "the following arguments are required: %s": "缺少必需参数：%s",
+    "invalid choice: %(value)r (choose from %(choices)s)": "无效选择：%(value)r（可选：%(choices)s）",
+}
+
+
+DEMO_TEXT = """
+星読み端末版へようこそ。
+
+これは EPUB リーダーのふりをしている小さな端末アプリです。縦書きはできます。ただし本当に縦書きなのか、端末が勢いで文字を積み上げているだけなのかは、実行環境とあなたの心の広さに依存します。
+
+辞書を引くこともできます。活用形を戻すこともあります。戻し方が合っているかどうかは、だいたい顔つきで判断しています。
+
+今日の目標は読むことです。明日の目標は、読んだ気になった統計を眺めて少しだけ強くなることです。
+""".strip()
+
+
+class GracefulExit(Exception):
+    pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        if not argv:
+            if sys.stdin.isatty():
+                return menu_loop()
+            argv = ["--help"]
+        parser = build_parser()
+        args = parser.parse_args(argv)
+        return int(args.func(args) or 0)
+    except GracefulExit:
+        return 0
+    except KeyboardInterrupt:
+        print("\n终端书签已经用精神力保存。")
+        return 130
+    except Exception as exc:
+        print(style(f"错误：{exc}", RED), file=sys.stderr)
+        return 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    argparse._ = lambda message: ARGPARSE_TRANSLATIONS.get(message, message)
+    parser = argparse.ArgumentParser(
+        prog="hoshi-terminal",
+        description="Hoshi Reader 终端恶搞版：给想拥有灵魂的命令行使用。",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}", help="显示版本号并退出")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    menu = subparsers.add_parser("menu", aliases=["菜单"], help="打开中文主菜单")
+    menu.set_defaults(func=cmd_menu)
+
+    demo = subparsers.add_parser("demo", aliases=["演示"], help="打开内置演示书")
+    demo.add_argument("--print", action="store_true", dest="print_only", help="打印第一页后退出")
+    demo.add_argument("--vertical", action="store_true", help="用终端纵书模式显示")
+    demo.set_defaults(func=cmd_demo)
+
+    import_cmd = subparsers.add_parser("import", aliases=["导入"], help="导入书籍到书架")
+    import_cmd.add_argument("path", metavar="路径")
+    import_cmd.add_argument("--title", metavar="标题", help="手动指定书名")
+    import_cmd.set_defaults(func=cmd_import)
+
+    shelf = subparsers.add_parser("shelf", aliases=["书架"], help="查看已导入书籍")
+    shelf.set_defaults(func=cmd_shelf)
+
+    read = subparsers.add_parser("read", aliases=["阅读"], help="阅读书籍 id、标题片段或文件路径")
+    read.add_argument("target", nargs="?", metavar="目标")
+    read.add_argument("--print", action="store_true", dest="print_only", help="打印当前页后退出")
+    read.add_argument("--vertical", action="store_true", help="启动时使用终端纵书模式")
+    read.add_argument("--width", type=int, help="非交互输出的页面宽度")
+    read.add_argument("--lines", type=int, help="非交互输出的页面行数")
+    read.set_defaults(func=cmd_read)
+
+    lookup = subparsers.add_parser("lookup", aliases=["查词"], help="查词")
+    lookup.add_argument("word", metavar="词")
+    lookup.set_defaults(func=cmd_lookup)
+
+    dict_import = subparsers.add_parser("dict-import", aliases=["导入词典"], help="导入 Yomitan 词典 zip 或目录")
+    dict_import.add_argument("path", metavar="路径")
+    dict_import.set_defaults(func=cmd_dict_import)
+
+    mine = subparsers.add_parser("mine", aliases=["挖矿"], help="追加一条 Anki 可导入 CSV")
+    mine.add_argument("word", metavar="词")
+    mine.add_argument("--sentence", default="", help="例句")
+    mine.add_argument("--note", default="", help="备注")
+    mine.set_defaults(func=cmd_mine)
+
+    stats = subparsers.add_parser("stats", aliases=["统计"], help="显示阅读统计")
+    stats.set_defaults(func=cmd_stats)
+
+    sync = subparsers.add_parser("sync", aliases=["同步"], help="同步阅读进度")
+    sync.add_argument("direction", nargs="?", default="auto", choices=["auto", "export", "import", "自动", "导出", "导入"])
+    sync.add_argument("--path", metavar="目录", help="临时指定同步目录并保存")
+    sync.set_defaults(func=cmd_sync)
+
+    settings = subparsers.add_parser("settings", aliases=["设置"], help="打开设置")
+    settings.set_defaults(func=cmd_settings)
+
+    doctor = subparsers.add_parser("doctor", aliases=["诊断"], help="检查运行环境和终端心情")
+    doctor.set_defaults(func=cmd_doctor)
+
+    return parser
+
+
+def cmd_menu(args: argparse.Namespace) -> int:
+    return menu_loop()
+
+
+def cmd_settings(args: argparse.Namespace) -> int:
+    return settings_loop()
+
+
+def cmd_demo(args: argparse.Namespace) -> int:
+    print(banner())
+    pages = paginate(DEMO_TEXT, width=args.width if hasattr(args, "width") else None)
+    if args.print_only or not sys.stdin.isatty():
+        print(render_page("Hoshi Reader Terminal 演示", pages[0], len(pages), vertical=args.vertical))
+        return 0
+    return interactive_loop("Hoshi Reader Terminal 演示", DEMO_TEXT, pages, None, args.vertical)
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    library = Library()
+    record = library.import_book(args.path, title=args.title)
+    print(style("已导入", GREEN), f"{record.title} [{record.id}]")
+    print(style("保存位置", DIM), record.stored_path)
+    return 0
+
+
+def cmd_shelf(args: argparse.Namespace) -> int:
+    library = Library()
+    books = library.books
+    if not books:
+        print("书架是空的。可以导入一本书，也可以自信地称之为极简主义。")
+        return 0
+    print(style("Hoshi 终端书架", BOLD))
+    for book in sorted(books, key=lambda item: item.last_access, reverse=True):
+        progress = summarize_text_progress(book.position, _safe_text_for_progress(book))
+        print(f"{book.id}  {progress}  {book.title}  {style(book.kind, DIM)}")
+    return 0
+
+
+def cmd_read(args: argparse.Namespace) -> int:
+    library = Library()
+    record: BookRecord | None = None
+    title: str
+    text: str
+
+    target_path = Path(args.target).expanduser() if args.target else None
+    if target_path and target_path.exists():
+        extracted = extract_book(target_path)
+        title = extracted.title
+        text = extracted.text
+    else:
+        record = library.find_book(args.target)
+        if record is None:
+            raise ValueError("找不到这本书。可以先运行 `shelf` / `书架`，或直接传文件路径。")
+        title, text = library.load_record_text(record)
+
+    pages = paginate(text, width=args.width, lines_per_page=args.lines)
+    start_page = page_for_position(pages, record.position if record else 0)
+    if args.print_only or not sys.stdin.isatty():
+        print(render_page(title, pages[start_page], len(pages), vertical=args.vertical))
+        return 0
+    return interactive_loop(title, text, pages, record, args.vertical, start_page=start_page)
+
+
+def cmd_lookup(args: argparse.Namespace) -> int:
+    manager = DictionaryManager(Library().dictionary_file)
+    print(format_results(manager.lookup(args.word)))
+    return 0
+
+
+def cmd_dict_import(args: argparse.Namespace) -> int:
+    manager = DictionaryManager(Library().dictionary_file)
+    count = manager.import_yomitan(args.path)
+    print(style("词典已导入", GREEN), f"新增 {count} 条")
+    return 0
+
+
+def cmd_mine(args: argparse.Namespace) -> int:
+    print(mine_word(args.word, sentence=args.sentence, note=args.note))
+    return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    library = Library()
+    stats = sorted(library.statistics, key=lambda item: (item.date_key, item.title), reverse=True)
+    if not stats:
+        print("还没有统计。计数器拒绝假装你已经很努力。")
+        return 0
+    print(style("阅读统计", BOLD))
+    for item in stats:
+        minutes = item.reading_time / 60
+        print(
+            f"{item.date_key}  {item.title}  "
+            f"{item.characters_read} 字符  {minutes:.1f} 分钟  {item.last_reading_speed} 字符/分钟"
+        )
+    return 0
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    library = Library()
+    if args.path:
+        library.set_setting("sync_path", args.path)
+    for message in sync_library(library, args.direction):
+        print(message)
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    columns, rows = terminal_size()
+    library = Library()
+    print(banner())
+    print(style("运行环境", BOLD))
+    print(f"Python: {sys.version.split()[0]}")
+    print(f"数据目录: {library.root}")
+    print(f"终端尺寸: {columns}x{rows}")
+    print(f"书籍数量: {len(library.books)}")
+    print(f"同步目录: {library.settings['sync_path']}")
+    print(f"词典文件: {library.dictionary_file}")
+    print(style("诊断结果", YELLOW), "终端情绪稳定，可以开始阅读")
+    return 0
+
+
+def interactive_loop(
+    title: str,
+    text: str,
+    pages: list[Page],
+    record: BookRecord | None,
+    vertical: bool = False,
+    start_page: int = 0,
+) -> int:
+    library = Library()
+    page_index = start_page
+    session_started = time.monotonic()
+    session_start_char = pages[start_page].start_char if pages else 0
+
+    while True:
+        page = pages[page_index]
+        print(clear_screen(), end="")
+        print(render_page(title, page, len(pages), vertical=vertical))
+        command = _read_input(style("hoshi> ", CYAN)).strip()
+        if command in {"", "n", "next"}:
+            page_index = min(len(pages) - 1, page_index + 1)
+        elif command in {"p", "prev", "previous"}:
+            page_index = max(0, page_index - 1)
+        elif command in {"q", "quit", "exit"}:
+            break
+        elif command == "v":
+            vertical = not vertical
+        elif command.startswith("/"):
+            word = command[1:].strip()
+            print(format_results(DictionaryManager(library.dictionary_file).lookup(word)))
+            _read_input(style("按 Enter 继续", DIM))
+        elif command.startswith("a "):
+            word = command[2:].strip()
+            sentence = sentence_around(page.text, word)
+            card_path = library.mine_card(word, sentence=sentence)
+            print(style("已挖矿", MAGENTA), f"{word} -> {card_path}")
+            _read_input(style("按 Enter 继续", DIM))
+        elif command.startswith("h"):
+            note = command[1:].strip()
+            if record is None:
+                print("直接阅读文件时没有书架记录，无法保存划线。")
+            else:
+                library.add_highlight(record, page.text, note)
+                print(style("已划线当前页", GREEN))
+            _read_input(style("按 Enter 继续", DIM))
+        elif command == "s":
+            chars = max(0, page.end_char - session_start_char)
+            seconds = max(0.1, time.monotonic() - session_started)
+            print(f"本次阅读：{chars} 字符，{seconds / 60:.1f} 分钟，{int(chars / (seconds / 60))} 字符/分钟")
+            _read_input(style("按 Enter 继续", DIM))
+        elif command.startswith("g "):
+            page_number = _parse_page_number(command[2:], len(pages))
+            if page_number is not None:
+                page_index = page_number
+        else:
+            print("未知命令。终端很有戏，但还不会读心。")
+            _read_input(style("按 Enter 继续", DIM))
+
+    if record is not None:
+        end_char = pages[page_index].start_char
+        characters_delta = max(0, end_char - session_start_char)
+        seconds = max(0.0, time.monotonic() - session_started)
+        library.touch_progress(record, end_char, characters_delta, seconds)
+    print(style("书签已经塞回命令行。", GREEN))
+    return 0
+
+
+def menu_loop() -> int:
+    while True:
+        print(clear_screen(), end="")
+        print(banner())
+        print(style("Hoshi Reader", BOLD))
+        print("1. 书库")
+        print("2. 查词")
+        print("3. 设置")
+        print("0. 退出")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+
+        if choice == "1":
+            books_menu()
+        elif choice == "2":
+            dictionary_menu()
+        elif choice == "3":
+            settings_loop()
+        elif choice in {"0", "q", "Q", "退出"}:
+            print(style("再见，书签已经夹好。", GREEN))
+            return 0
+        else:
+            print("没有这个选项。终端菜单已经尽力保持清醒。")
+            _pause()
+
+
+def books_menu() -> int:
+    while True:
+        print(clear_screen(), end="")
+        print(banner())
+        print(style("书库", BOLD))
+        print("1. 书架")
+        print("2. 导入 EPUB")
+        print("3. 阅读")
+        print("4. 书库设置")
+        print("0. 返回")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            cmd_shelf(argparse.Namespace())
+            _pause()
+        elif choice == "2":
+            _menu_import_book()
+        elif choice == "3":
+            _menu_shelf_read()
+        elif choice == "4":
+            _bookshelf_settings()
+        elif choice in {"0", "q", "Q", "返回"}:
+            return 0
+        else:
+            print("没有这个书库选项。")
+            _pause()
+
+
+def dictionary_menu() -> int:
+    while True:
+        print(clear_screen(), end="")
+        print(banner())
+        print(style("查词", BOLD))
+        print("1. 搜索")
+        print("2. 导入辞典")
+        print("3. 辞典列表")
+        print("4. 辞典设置")
+        print("0. 返回")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            word = _read_input("请输入要查的词：").strip()
+            if word:
+                print(format_results(DictionaryManager(Library().dictionary_file).lookup(word)))
+            _pause()
+        elif choice == "2":
+            _dictionary_import_prompt()
+        elif choice == "3":
+            _dictionary_list()
+        elif choice == "4":
+            _dictionary_settings()
+        elif choice in {"0", "q", "Q", "返回"}:
+            return 0
+        else:
+            print("没有这个查词选项。")
+            _pause()
+
+
+def _menu_demo() -> None:
+    pages = paginate(DEMO_TEXT)
+    vertical = Library().settings["reader_vertical"] == "true"
+    interactive_loop("Hoshi Reader Terminal 演示", DEMO_TEXT, pages, None, vertical)
+    _pause("已回到主菜单。按 Enter 继续")
+
+
+def _menu_import_book() -> None:
+    library = Library()
+    book_dir = Path(library.settings["book_path"]).expanduser()
+    files = find_book_files(book_dir)
+    print(style("书籍目录", BOLD), book_dir)
+    if files:
+        print("可导入文件：")
+        for index, file_path in enumerate(files[:30], start=1):
+            print(f"{index:>2}. {file_path.relative_to(book_dir) if file_path.is_relative_to(book_dir) else file_path}")
+        if len(files) > 30:
+            print(f"... 还有 {len(files) - 30} 个文件未显示")
+    else:
+        print("没有扫描到 epub/txt/md/html 文件。可以在设置里改小说目录。")
+    raw = _read_input("输入序号、路径，或 a 全部导入（留空返回）：").strip().strip('"')
+    if not raw:
+        return
+    if raw.lower() == "a":
+        targets = files
+        if not targets:
+            _pause()
+            return
+        try:
+            imported, skipped = library.import_books(targets)
+        except Exception as exc:
+            print(style(f"批量导入失败：{exc}", RED))
+        else:
+            print(style("批量导入完成", GREEN), f"新增 {len(imported)} 本，跳过 {len(skipped)} 本")
+        _pause()
+        return
+    if raw.isdigit() and files:
+        index = int(raw)
+        if index < 1 or index > len(files):
+            print("序号超出范围。")
+            _pause()
+            return
+        path = str(files[index - 1])
+    else:
+        path = raw
+    title = _read_input("自定义标题（可留空）：").strip() or None
+    try:
+        record = library.import_book(path, title=title)
+    except Exception as exc:
+        print(style(f"导入失败：{exc}", RED))
+    else:
+        print(style("已导入", GREEN), f"{record.title} [{record.id}]")
+    _pause()
+
+
+def _menu_shelf_read() -> None:
+    library = Library()
+    books = library.books
+    if not books:
+        print("书架是空的。先用 2 导入一本书。")
+        _pause()
+        return
+    print(style("Hoshi 终端书架", BOLD))
+    for book in sorted(books, key=lambda item: item.last_access, reverse=True):
+        progress = summarize_text_progress(book.position, _safe_text_for_progress(book))
+        print(f"{book.id}  {progress}  {book.title}  {style(book.kind, DIM)}")
+    query = _read_input("输入书籍 id/标题片段开始阅读（留空打开最近一本）：").strip() or None
+    record = library.find_book(query)
+    if record is None:
+        print("找不到这本书。")
+        _pause()
+        return
+    try:
+        title, text = library.load_record_text(record)
+    except Exception as exc:
+        print(style(f"打开失败：{exc}", RED))
+        _pause()
+        return
+    pages = paginate(text)
+    start_page = page_for_position(pages, record.position)
+    vertical = library.settings["reader_vertical"] == "true"
+    interactive_loop(title, text, pages, record, vertical, start_page=start_page)
+    _pause("已回到主菜单。按 Enter 继续")
+
+
+def _menu_lookup() -> None:
+    library = Library()
+    dictionary = DictionaryManager(library.dictionary_file)
+    default_path = library.settings["dictionary_path"]
+    print(style("词典目录", BOLD), default_path)
+    print(f"已导入词条：{len(dictionary.entries)}")
+    import_path = _read_input("导入词典路径；输入 d 导入当前词典目录；留空跳过：").strip().strip('"')
+    if import_path.lower() == "d":
+        import_path = default_path
+    if import_path:
+        try:
+            count = dictionary.import_yomitan(import_path)
+        except Exception as exc:
+            print(style(f"词典导入失败：{exc}", RED))
+        else:
+            print(style("词典已导入", GREEN), f"新增 {count} 条")
+    word = _read_input("请输入要查的词：").strip()
+    if word:
+        print(format_results(DictionaryManager(library.dictionary_file).lookup(word)))
+    _pause()
+
+
+def _dictionary_import_prompt() -> None:
+    library = Library()
+    default_path = library.settings["dictionary_path"]
+    print(style("词典目录", BOLD), default_path)
+    import_path = _read_input("导入词典路径；输入 d 导入当前词典目录；留空返回：").strip().strip('"')
+    if import_path.lower() == "d":
+        import_path = default_path
+    if not import_path:
+        return
+    try:
+        count = DictionaryManager(library.dictionary_file).import_yomitan(import_path)
+    except Exception as exc:
+        print(style(f"词典导入失败：{exc}", RED))
+    else:
+        print(style("词典已导入", GREEN), f"新增 {count} 条")
+    _pause()
+
+
+def _dictionary_list() -> None:
+    library = Library()
+    manager = DictionaryManager(library.dictionary_file)
+    print(style("辞典", BOLD))
+    print(f"词典目录: {library.settings['dictionary_path']}")
+    print(f"已导入词条: {len(manager.entries)}")
+    sources = find_yomitan_sources(library.settings["dictionary_path"])
+    print(f"目录内可导入词典源: {len(sources)}")
+    for index, source in enumerate(sources[:20], start=1):
+        print(f"{index:>2}. {source.name}")
+    if len(sources) > 20:
+        print(f"... 还有 {len(sources) - 20} 个")
+    _pause()
+
+
+def _dictionary_settings() -> None:
+    library = Library()
+    print(style("辞典设置", BOLD))
+    print(f"词典目录: {library.settings['dictionary_path']}")
+    print("1. 设置词典目录")
+    print("2. 扫描并导入词典目录")
+    print("0. 返回")
+    choice = _read_input(style("请选择：", CYAN)).strip()
+    if choice == "1":
+        _menu_set_path("dictionary_path", "词典目录")
+    elif choice == "2":
+        _settings_import_dictionaries()
+
+
+def _bookshelf_settings() -> None:
+    library = Library()
+    book_dir = Path(library.settings["book_path"]).expanduser()
+    files = find_book_files(book_dir)
+    print(style("书库设置", BOLD))
+    print(f"小说目录: {book_dir}")
+    print(f"目录内可导入文件: {len(files)}")
+    print("1. 设置小说目录")
+    print("2. 扫描并导入小说目录")
+    print("0. 返回")
+    choice = _read_input(style("请选择：", CYAN)).strip()
+    if choice == "1":
+        _menu_set_path("book_path", "小说目录")
+    elif choice == "2":
+        _settings_import_books()
+
+
+def _menu_mine() -> None:
+    word = _read_input("请输入要挖的词：").strip()
+    if not word:
+        return
+    sentence = _read_input("例句（可留空）：").strip()
+    note = _read_input("备注（可留空）：").strip()
+    print(mine_word(word, sentence=sentence, note=note))
+    _pause()
+
+
+def _menu_stats_doctor() -> None:
+    library = Library()
+    stats = sorted(library.statistics, key=lambda item: (item.date_key, item.title), reverse=True)
+    print(style("阅读统计", BOLD))
+    if not stats:
+        print("还没有统计。读几页再来，它会装得更像真的。")
+    else:
+        for item in stats:
+            minutes = item.reading_time / 60
+            print(
+                f"{item.date_key}  {item.title}  "
+                f"{item.characters_read} 字符  {minutes:.1f} 分钟  {item.last_reading_speed} 字符/分钟"
+            )
+    columns, rows = terminal_size()
+    print()
+    print(style("诊断", BOLD))
+    print(f"Python: {sys.version.split()[0]}")
+    print(f"数据目录: {library.root}")
+    print(f"终端尺寸: {columns}x{rows}")
+    print(f"词典文件: {library.dictionary_file}")
+    print(style("诊断结果", YELLOW), "终端情绪稳定，可以继续阅读")
+    _pause()
+
+
+def settings_loop() -> int:
+    while True:
+        library = Library()
+        settings = library.settings
+        print(clear_screen(), end="")
+        print(banner())
+        print(style("设置", BOLD))
+        print("1. 辞典")
+        print("2. Anki")
+        print("3. 外观")
+        print("4. 高级")
+        print("5. 诊断")
+        print("6. 关于")
+        print("0. 返回主菜单")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            _dictionary_settings()
+        elif choice == "2":
+            _settings_anki()
+        elif choice == "3":
+            _settings_appearance()
+        elif choice == "4":
+            advanced_menu()
+        elif choice == "5":
+            cmd_doctor(argparse.Namespace())
+            _pause()
+        elif choice == "6":
+            _settings_about()
+        elif choice in {"0", "q", "Q", "返回"}:
+            return 0
+        else:
+            print("没有这个设置项。")
+            _pause()
+
+
+def _menu_set_path(key: str, label: str) -> None:
+    library = Library()
+    current = library.settings[key]
+    raw = _read_input(f"请输入新的{label}（当前：{current}）：").strip().strip('"')
+    if not raw:
+        return
+    path = Path(raw).expanduser()
+    if not path.exists():
+        print(style("路径不存在，已保存但暂时无法使用。", YELLOW))
+    library.set_setting(key, path)
+    print(style("已保存", GREEN), f"{label}: {path}")
+    _pause()
+
+
+def _settings_import_books() -> None:
+    library = Library()
+    book_dir = Path(library.settings["book_path"]).expanduser()
+    files = find_book_files(book_dir)
+    if not files:
+        print(f"没有在 {book_dir} 找到可导入小说。")
+        _pause()
+        return
+    print(f"找到 {len(files)} 个可导入文件。")
+    confirm = _read_input("输入 y 全部导入：").strip().lower()
+    if confirm != "y":
+        return
+    try:
+        imported, skipped = library.import_books(files)
+    except Exception as exc:
+        print(style(f"导入失败：{exc}", RED))
+    else:
+        print(style("导入完成", GREEN), f"新增 {len(imported)} 本，跳过 {len(skipped)} 本")
+    _pause()
+
+
+def _settings_import_dictionaries() -> None:
+    library = Library()
+    dictionary_dir = Path(library.settings["dictionary_path"]).expanduser()
+    sources = find_yomitan_sources(dictionary_dir)
+    if not sources:
+        print(f"没有在 {dictionary_dir} 找到 Yomitan 词典 zip 或目录。")
+        _pause()
+        return
+    print(f"找到 {len(sources)} 个词典源。")
+    for index, source in enumerate(sources[:25], start=1):
+        print(f"{index:>2}. {source.relative_to(dictionary_dir) if source.is_relative_to(dictionary_dir) else source}")
+    if len(sources) > 25:
+        print(f"... 还有 {len(sources) - 25} 个词典源未显示")
+    confirm = _read_input("输入 y 全部导入（大词典可能需要一会）：").strip().lower()
+    if confirm != "y":
+        return
+    manager = DictionaryManager(library.dictionary_file)
+    total = 0
+    for source in sources:
+        try:
+            count = manager.import_yomitan(source)
+        except Exception as exc:
+            print(style(f"跳过 {source.name}: {exc}", YELLOW))
+            continue
+        total += count
+        print(f"{source.name}: 新增 {count} 条")
+    print(style("词典导入完成", GREEN), f"总新增 {total} 条")
+    _pause()
+
+
+def _settings_anki() -> None:
+    while True:
+        library = Library()
+        settings = library.settings
+        print(clear_screen(), end="")
+        print(banner())
+        print(style("Anki", BOLD))
+        print(f"挖矿模式: {settings['anki_mode']}")
+        print(f"牌组: {settings['anki_deck']}")
+        print(f"模板: {settings['anki_model']}")
+        print("1. 挖矿一个词")
+        print("2. AnkiConnect")
+        print("3. 修改牌组")
+        print("4. 修改模板")
+        print("5. 修改字段")
+        print("0. 返回")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            _menu_mine()
+        elif choice == "2":
+            _settings_ankiconnect()
+        elif choice == "3":
+            _menu_set_raw_setting("anki_deck", "牌组")
+        elif choice == "4":
+            _menu_set_raw_setting("anki_model", "模板")
+        elif choice == "5":
+            _menu_set_raw_setting("anki_front_field", "正面字段")
+            _menu_set_raw_setting("anki_back_field", "背面字段")
+        elif choice in {"0", "q", "Q", "返回"}:
+            return
+        else:
+            print("没有这个 Anki 选项。")
+            _pause()
+
+
+def _settings_ankiconnect() -> None:
+    library = Library()
+    settings = library.settings
+    print(style("AnkiConnect 设置", BOLD))
+    print(f"URL: {settings['ankiconnect_url']}")
+    print(f"模式: {settings['anki_mode']}  (csv / ankiconnect / both)")
+    print(f"牌组: {settings['anki_deck']}")
+    print(f"模板: {settings['anki_model']}")
+    print(f"正面字段: {settings['anki_front_field']}")
+    print(f"背面字段: {settings['anki_back_field']}")
+    print(f"标签: {settings['anki_tag']}")
+    print()
+    print("1. 修改 URL")
+    print("2. 修改模式")
+    print("3. 修改牌组")
+    print("4. 修改模板")
+    print("5. 修改字段")
+    print("6. 测试连接")
+    print("0. 返回")
+    choice = _read_input(style("请选择：", CYAN)).strip()
+    if choice == "1":
+        _menu_set_raw_setting("ankiconnect_url", "AnkiConnect URL")
+    elif choice == "2":
+        raw = _read_input("模式 csv / ankiconnect / both：").strip().lower()
+        if raw in {"csv", "ankiconnect", "both"}:
+            library.set_setting("anki_mode", raw)
+            print(style("已保存", GREEN), raw)
+        else:
+            print("模式无效。")
+        _pause()
+    elif choice == "3":
+        _menu_set_raw_setting("anki_deck", "牌组")
+    elif choice == "4":
+        _menu_set_raw_setting("anki_model", "模板")
+    elif choice == "5":
+        _menu_set_raw_setting("anki_front_field", "正面字段")
+        _menu_set_raw_setting("anki_back_field", "背面字段")
+    elif choice == "6":
+        anki = settings_from_dict(settings)
+        try:
+            connected_version = ankiconnect_version(anki.url)
+        except AnkiConnectError as exc:
+            print(style(f"连接失败：{exc}", YELLOW))
+        else:
+            print(style("连接成功", GREEN), f"AnkiConnect v{connected_version}")
+        _pause()
+
+
+def _settings_appearance() -> None:
+    library = Library()
+    current = library.settings["reader_vertical"] == "true"
+    print(style("外观", BOLD))
+    print("1. 文字方向")
+    print(f"当前: {'竖排' if current else '横排'}")
+    choice = _read_input(style("请选择：", CYAN)).strip()
+    if choice == "1":
+        library.set_setting("reader_vertical", "false" if current else "true")
+        print(style("已保存", GREEN), f"文字方向: {'横排' if current else '竖排'}")
+    _pause()
+
+
+def advanced_menu() -> int:
+    while True:
+        print(clear_screen(), end="")
+        print(banner())
+        print(style("高级", BOLD))
+        print("1. 统计")
+        print("2. 同步")
+        print("3. AnkiConnect")
+        print("4. 备份")
+        print("0. 返回")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            _menu_stats_doctor()
+        elif choice == "2":
+            _advanced_sync()
+        elif choice == "3":
+            _settings_ankiconnect()
+        elif choice == "4":
+            _advanced_backup()
+        elif choice in {"0", "q", "Q", "返回"}:
+            return 0
+        else:
+            print("没有这个高级选项。")
+            _pause()
+
+
+def _advanced_sync() -> None:
+    library = Library()
+    print(style("同步", BOLD))
+    print(f"同步目录: {library.settings['sync_path']}")
+    print("1. 自动同步阅读进度")
+    print("2. 导出到同步目录")
+    print("3. 从同步目录导入")
+    print("4. 设置同步目录")
+    print("0. 返回")
+    choice = _read_input(style("请选择：", CYAN)).strip()
+    if choice == "1":
+        for message in sync_library(library, "auto"):
+            print(message)
+        _pause()
+    elif choice == "2":
+        for message in sync_library(library, "export"):
+            print(message)
+        _pause()
+    elif choice == "3":
+        for message in sync_library(library, "import"):
+            print(message)
+        _pause()
+    elif choice == "4":
+        _menu_set_path("sync_path", "同步目录")
+
+
+def _advanced_backup() -> None:
+    library = Library()
+    target_base = library.root / f"hoshi-terminal-backup-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        archive = shutil.make_archive(str(target_base), "zip", library.root)
+    except Exception as exc:
+        print(style(f"备份失败：{exc}", RED))
+    else:
+        print(style("备份完成", GREEN), archive)
+    _pause()
+
+
+def _settings_about() -> None:
+    print(style("关于", BOLD))
+    print(f"Hoshi Reader Terminal {__version__}")
+    print("菜单结构参考 Hoshi Reader iOS / Android。")
+    _pause()
+
+
+def _menu_set_raw_setting(key: str, label: str) -> None:
+    library = Library()
+    current = library.settings[key]
+    raw = _read_input(f"请输入新的{label}（当前：{current}）：").strip()
+    if not raw:
+        return
+    library.set_setting(key, raw)
+    print(style("已保存", GREEN), f"{label}: {raw}")
+    _pause()
+
+
+def mine_word(word: str, sentence: str = "", note: str = "") -> str:
+    library = Library()
+    settings = library.settings
+    anki = settings_from_dict(settings)
+    outputs: list[str] = []
+    csv_path = None
+    if anki.mode in {"csv", "both"}:
+        csv_path = library.mine_card(word, sentence=sentence, note=note)
+        outputs.append(f"CSV: {csv_path}")
+    if anki.mode in {"ankiconnect", "both"}:
+        try:
+            note_id = add_note(anki, word, sentence=sentence, note=note)
+        except AnkiConnectError as exc:
+            if anki.mode == "ankiconnect":
+                outputs.append(f"AnkiConnect 失败: {exc}")
+            else:
+                outputs.append(f"AnkiConnect 不可用，已保留 CSV: {exc}")
+        else:
+            outputs.append(f"AnkiConnect: 已添加 note {note_id}")
+    if not outputs:
+        csv_path = library.mine_card(word, sentence=sentence, note=note)
+        outputs.append(f"CSV: {csv_path}")
+    return style("已挖矿", MAGENTA) + " " + f"{word} -> " + " | ".join(outputs)
+
+
+def find_book_files(root: Path) -> list[Path]:
+    if not root.exists() or not root.is_dir():
+        return []
+    files: list[Path] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in SKIP_SCAN_DIRS for part in path.parts):
+            continue
+        if path.name.lower() in SKIP_SCAN_FILES:
+            continue
+        if path.suffix.lower() in BOOK_SUFFIXES:
+            files.append(path)
+    return sorted(files, key=lambda item: str(item).lower())
+
+
+def _pause(prompt: str = "按 Enter 回到主菜单") -> None:
+    _read_input(style(prompt, DIM))
+
+
+def _read_input(prompt: str = "") -> str:
+    try:
+        return input(prompt)
+    except EOFError as exc:
+        raise GracefulExit from exc
+
+
+def _parse_page_number(raw: str, total_pages: int) -> int | None:
+    try:
+        page = int(raw.strip()) - 1
+    except ValueError:
+        return None
+    return min(total_pages - 1, max(0, page))
+
+
+def _safe_text_for_progress(book: BookRecord) -> str:
+    try:
+        return extract_book(Path(book.stored_path)).text
+    except Exception:
+        return "?"

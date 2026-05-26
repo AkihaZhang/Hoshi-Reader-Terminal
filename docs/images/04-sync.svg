@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="103" viewBox="0 0 720 103" role="img" aria-label="Hoshi Reader Terminal screenshot">
+  <rect width="720" height="103" rx="8" fill="#111820"/>
+  <rect x="0" y="0" width="720" height="34" rx="8" fill="#202a33"/>
+  <circle cx="22" cy="17" r="6" fill="#ff5f57"/>
+  <circle cx="42" cy="17" r="6" fill="#ffbd2e"/>
+  <circle cx="62" cy="17" r="6" fill="#28c840"/>
+  <text x="86" y="22" fill="#9fb4c0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="13">hoshi</text>
+  <rect x="16" y="44" width="672" height="43" rx="6" fill="#0b1016" stroke="#263542"/>
+  <text x="24" y="58" fill="#a8f3b2" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="15" xml:space="preserve">demo book: 已导出进度 120/142</text>
+</svg>
