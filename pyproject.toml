@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hoshi-reader-terminal"
-version = "0.1.0"
+version = "0.1.1"
 description = "A terminal parody of Hoshi Reader that is still useful enough to be dangerous."
 readme = "README.md"
 requires-python = ">=3.10"

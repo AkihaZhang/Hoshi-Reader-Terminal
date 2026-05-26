@@ -13,26 +13,26 @@ BUILTIN_ENTRIES = [
     {
         "term": "星",
         "reading": "ほし",
-        "definitions": ["星星；也是这个终端假装自己很闪耀的理由"],
-        "dictionary": "紧急终端辞书",
+        "definitions": ["星；夜空中发光的天体。"],
+        "dictionary": "内置辞书",
     },
     {
         "term": "読む",
         "reading": "よむ",
-        "definitions": ["阅读；盯着文字直到意义愿意出现"],
-        "dictionary": "紧急终端辞书",
+        "definitions": ["読む；阅读，朗读，理解文字内容。"],
+        "dictionary": "内置辞书",
     },
     {
         "term": "端末",
         "reading": "たんまつ",
-        "definitions": ["终端；GUI 梦想被压缩成 ANSI 的地方"],
-        "dictionary": "紧急终端辞书",
+        "definitions": ["终端；用于输入命令并显示输出的环境。"],
+        "dictionary": "内置辞书",
     },
     {
         "term": "辞書",
         "reading": "じしょ",
-        "definitions": ["辞书；一个装满自信的 zip 文件"],
-        "dictionary": "紧急终端辞书",
+        "definitions": ["辞书；按词条说明词义、读音或用法的资料。"],
+        "dictionary": "内置辞书",
     },
 ]
 
@@ -141,28 +141,28 @@ class DictionaryManager:
 def deinflect(word: str) -> list[tuple[str, str]]:
     results: list[tuple[str, str]] = []
     polite_rules = [
-        ("ませんでした", "礼貌否定过去式：终端鞠躬后猜了一下"),
-        ("ました", "礼貌过去式：终端把领带摘掉了"),
-        ("ません", "礼貌否定形：终端相信一切都能回到原形"),
-        ("ます", "礼貌形：终端开始套近乎"),
+        ("ませんでした", "礼貌否定过去式"),
+        ("ました", "礼貌过去式"),
+        ("ません", "礼貌否定形"),
+        ("ます", "礼貌形"),
     ]
     for suffix, note in polite_rules:
         if word.endswith(suffix) and len(word) > len(suffix):
             results.extend(_polite_stem_forms(word[: -len(suffix)], note))
 
     rules = [
-        ("ない", "る", "否定形：终端恢复了一点乐观"),
-        ("なかった", "る", "否定过去式：终端原谅了过去"),
-        ("した", "する", "する过去式：终端找到了打工人"),
-        ("して", "する", "するて形：终端把动词放回去了"),
-        ("って", "う", "て形：终端挑了一个像样的五段动词"),
-        ("った", "う", "过去式：终端挑了一个像样的五段动词"),
-        ("んだ", "む", "过去式：终端听见了 m 音"),
-        ("いた", "く", "过去式：终端选择 ku"),
-        ("いだ", "ぐ", "过去式：终端选择 gu"),
-        ("した", "す", "过去式：终端选择 su"),
-        ("た", "る", "过去式：终端迈出了一小步"),
-        ("て", "る", "て形：终端迈出了一小步"),
+        ("ない", "る", "否定形"),
+        ("なかった", "る", "否定过去式"),
+        ("した", "する", "する过去式"),
+        ("して", "する", "するて形"),
+        ("って", "う", "て形"),
+        ("った", "う", "过去式"),
+        ("んだ", "む", "过去式"),
+        ("いた", "く", "过去式"),
+        ("いだ", "ぐ", "过去式"),
+        ("した", "す", "过去式"),
+        ("た", "る", "过去式"),
+        ("て", "る", "て形"),
     ]
     for suffix, replacement, note in rules:
         if word.endswith(suffix) and len(word) > len(suffix):
@@ -277,7 +277,7 @@ def _parse_term_bank_row(row: object, dictionary_name: str) -> dict[str, object]
     glossary = row[5]
     definitions = _flatten_glossary(glossary)
     if not definitions:
-        definitions = ["释义确实存在，但终端没能把它整理得很好看"]
+        definitions = ["该词条没有可显示的文本释义。"]
     return {
         "term": term,
         "reading": reading,

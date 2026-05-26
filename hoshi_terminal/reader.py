@@ -74,7 +74,7 @@ def render_vertical(text: str, rows: int | None = None) -> str:
         for chunk in reversed(chunks):
             cells.append(chunk[row] if row < len(chunk) else " ")
         output.append(" ".join(cells).rstrip())
-    warning = style("[终端纵书：准确度足够写进民间传说]", GREEN)
+    warning = style("[终端纵书]", GREEN)
     return warning + "\n" + "\n".join(output).rstrip()
 
 

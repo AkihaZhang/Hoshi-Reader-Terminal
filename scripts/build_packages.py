@@ -12,7 +12,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 APP_NAME = "Hoshi-Reader-Terminal"
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 PACKAGE_BASE = f"{APP_NAME}-{VERSION}"
 
 
@@ -128,7 +128,7 @@ def main() -> int:
 
 
 def _clean_old_artifacts() -> None:
-    for path in DIST.glob(f"{PACKAGE_BASE}-*"):
+    for path in DIST.glob(f"{APP_NAME}-*"):
         if path.is_dir():
             shutil.rmtree(path)
         else:

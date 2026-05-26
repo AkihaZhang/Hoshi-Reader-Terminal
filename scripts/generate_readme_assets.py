@@ -134,6 +134,8 @@ def render_terminal_svg(text: str) -> str:
     for index, line in enumerate(lines):
         y = 58 + index * 19
         fill = "#d8f5ff" if "Hoshi Reader Terminal" in line else "#e8eef2"
+        if line.strip(" @") == "" and "@" in line:
+            fill = "#8bdcff"
         if line.startswith("Hoshi Reader") or line in {"书库", "查词", "设置", "高级", "同步"}:
             fill = "#7ee6c4"
         if "已" in line or "词典" in line:

@@ -97,39 +97,34 @@ def banner() -> str:
 
 
 def logo_lines() -> list[str]:
-    # Rasterized from the upstream Hoshi icon shape into terminal cells.
-    # Dense ASCII reads more clearly than braille on light terminal themes.
+    # Hand-shaped "星" mark in a neofetch-style terminal grid.
     icon = [
-        "                           ,;+yhh+:",
-        "         m@@mh++oyhhdm@@@@@@@@@@@@@@Ny,",
-        "          m@@@@@@@@@Nmdhhyo+iiy@@@@@@@h",
-        "           @@@@N      .:ii;.  ;@@@@@@,",
-        "           i@@@@hdm@@@@@@@@@h d@@@@@:",
-        "            @@@@@NNmdhho+i:, .@@@@@i",
-        "            y@@@@     .:iohhym@@@@+",
-        "             @@@@@@@@@@@@@@@@@@@@i",
-        "             ,N@@hhN@mh+;::,;hhy:",
-        "          d@mhi    m@@@@@d:",
-        "         .@@@@@@i  .@@@@@@:.:iohhhi",
-        "         m@@@@@doyhh@@@@@@@@@@@@@@@y",
-        "        h@@@@@@@@@@@@@@@@@@@Ndhho+;",
-        "      .N@@@y  ,;ii;;N@@@@:",
-        "     ;@@di          m@@@@+ohhddhy:",
-        "    :y:      ohdmN@@@@@@@@@@@@@@@@:",
-        "             im@@@@@@@@@@hho+i;,.",
-        "                    @@@@@",
-        "                    @@@@@:;i+ohhdmN@@@@@@Nh:",
-        " :;ii++oyyhhddmN@@@@@@@@@@@@@@@@@@@@@@@@@@@@N",
-        " i@@@@@@@@@@@@@@@@@@@NNmmmddddhhhhddmN@@@@@@@",
+        "          ╭────────────────╮",
+        "      ╭───╯  ╭──────────╮  ╰──╮",
+        "    ╭─╯      │  ██████  │     ╰─╮",
+        "   ╭╯        │  ██████  │       ╰╮",
+        "   ╰╮        ╰──────────╯       ╭╯",
+        "     ╰──────╮          ╭───────╯",
+        "            ╰──────────╯",
+        "                 ██",
+        "         ╭───────██────────╮",
+        "      ╭──╯       ██        ╰──╮",
+        "    ╭─╯     ╭────██────╮      ╰╮",
+        "   ╱        ╰──────────╯       ╲",
+        "  ╱               ██            ╲",
+        "                  ██",
+        "       ╭──────────██──────────╮",
+        "   ╭───╯                      ╰───╮",
+        "   ╰──────────────────────────────╯",
     ]
     if ansi_enabled():
         colors = [
-            (64, 174, 232),
-            (82, 188, 242),
-            (102, 202, 250),
-            (46, 155, 218),
-            (74, 184, 238),
-            (92, 196, 246),
+            (20, 162, 218),
+            (43, 183, 224),
+            (72, 202, 214),
+            (92, 214, 190),
+            (42, 176, 214),
+            (71, 196, 224),
         ]
         return [f"{rgb(colors[index % len(colors)])}{line}{RESET}" for index, line in enumerate(icon)]
     return icon

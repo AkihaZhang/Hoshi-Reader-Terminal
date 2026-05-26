@@ -18,7 +18,6 @@ from .reader import character_count
 APP_NAME = "HoshiReaderTerminal"
 DEFAULT_DICTIONARY_PATH = Path.home() / "Documents" / "辞書"
 DEFAULT_SYNC_PATH = Path.home() / "Documents" / "HoshiReaderTerminalSync"
-PROJECT_BOOK_PATH = Path("/Users/akihazhang/Documents/Codex/2026-05-26/https-github-com-manhhao-hoshi-reader/Hoshi-Reader-Terminal")
 
 
 @dataclass
@@ -101,7 +100,7 @@ class Library:
             raw = {}
             self._state["settings"] = raw
         raw.setdefault("dictionary_path", str(DEFAULT_DICTIONARY_PATH))
-        raw.setdefault("book_path", str(PROJECT_BOOK_PATH if PROJECT_BOOK_PATH.exists() else Path.cwd()))
+        raw.setdefault("book_path", str(Path.cwd()))
         raw.setdefault("sync_path", str(DEFAULT_SYNC_PATH))
         raw.setdefault("ankiconnect_url", "http://127.0.0.1:8765")
         raw.setdefault("anki_deck", "Hoshi Reader Terminal")
@@ -111,6 +110,7 @@ class Library:
         raw.setdefault("anki_tag", "hoshi-terminal")
         raw.setdefault("anki_mode", "both")
         raw.setdefault("reader_vertical", "false")
+        raw.setdefault("language", "zh")
         return {str(key): str(value) for key, value in raw.items()}
 
     def set_setting(self, key: str, value: str | Path) -> None:
@@ -178,7 +178,7 @@ class Library:
 
     def load_record_text(self, record: BookRecord) -> tuple[str, str]:
         extracted = extract_book(Path(record.stored_path))
-        return extracted.title or record.title, extracted.text
+        return record.title or extracted.title, extracted.text
 
     def touch_progress(self, record: BookRecord, position: int, characters_delta: int, seconds: float) -> None:
         books = self._state.setdefault("books", [])
