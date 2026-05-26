@@ -1,3 +1,155 @@
-# Hoshi Reader Terminal
+# Hoshi Reader Terminal ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![独立包](https://img.shields.io/badge/standalone-无需%20Python-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
 
-中文说明已合并到仓库首页：[README.md](README.md)。
+[English](README.md) | **简体中文**
+
+一个受 [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) 和 [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android) 启发的终端日语 EPUB 阅读器，支持书库、Yomitan 查词、Anki 制卡、阅读统计和本地进度同步。
+
+普通 Hoshi 太像娱乐软件，不够赛博苦行僧。Hoshi Reader Terminal 把轻小说阅读、查词、挖卡和进度同步塞进终端，让你假装自己是 Unix 老登，也顺手解决 Hoshi 过于好用的问题。
+
+<p align="center">
+  <img src="docs/images/01-menu.svg" alt="主菜单" width="760">
+</p>
+
+| 阅读 | 查词 |
+| --- | --- |
+| <img src="docs/images/02-reader.svg" alt="阅读截图"> | <img src="docs/images/03-dictionary.svg" alt="查词截图"> |
+
+| 同步 | 设置 |
+| --- | --- |
+| <img src="docs/images/04-sync.svg" alt="同步截图"> | <img src="docs/images/05-settings.svg" alt="设置截图"> |
+
+## 功能
+
+### 书库
+
+- 支持导入 `.epub`、`.txt`、`.md`、`.html`、`.xhtml`。
+- 支持用书架数字序号、标题片段、id 或文件路径打开书。
+- 保存阅读进度、阅读统计、划线和备注。
+- 可以在终端菜单里设置默认小说目录。
+
+### 阅读
+
+- 在终端里分页阅读。
+- 支持横排和简易终端纵书模式。
+- 阅读器底部直接显示可照抄的输入例子：
+  - `/読みました` 查词
+  - `a 読む` 制卡
+  - `h 备注` 划线备注
+
+### 查词
+
+- 支持导入 Yomitan 词典目录或 zip。
+- 可以从查词菜单、命令行、阅读器内部查词。
+- 带简单日语活用还原，覆盖常见礼貌形和过去式。
+
+### Anki 制卡
+
+- 可以写入 CSV。
+- AnkiConnect 可用时可以直接发卡。
+- 可以在设置里调整牌组、模板、字段、标签和 AnkiConnect URL。
+
+### 同步和备份
+
+- 可以通过本地 `ttu-reader-data` 风格同步目录导出/导入进度和统计。
+- 备份文件会生成到数据目录外面，不会再把正在生成的备份 zip 打进自己里面。
+
+### 界面
+
+- 输入 `hoshi` 启动主菜单。
+- 界面标签支持简体中文、English、日本語。
+- 使用参考 Hoshi 图标的 neofetch 风格终端 logo。
+
+## 下载
+
+从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.2) 下载独立安装包。`standalone` 包已经包含运行时，不需要另装 Python。
+
+| 系统 | 安装包 |
+| --- | --- |
+| Windows | `Hoshi-Reader-Terminal-0.1.2-windows-standalone.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.2-macos-standalone.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.2-linux-standalone.tar.gz` 或 `hoshi-reader-terminal_0.1.2_amd64.deb` |
+
+安装后运行：
+
+```bash
+hoshi
+```
+
+## 包管理器
+
+```bash
+# macOS / Linuxbrew
+brew install AkihaZhang/Hoshi-Reader-Terminal/hoshi-reader-terminal
+
+# Windows / Scoop
+scoop bucket add hoshi-reader-terminal https://github.com/AkihaZhang/Hoshi-Reader-Terminal
+scoop install hoshi-reader-terminal
+
+# Debian / Ubuntu
+sudo apt install ./hoshi-reader-terminal_0.1.2_amd64.deb
+```
+
+## 命令
+
+```text
+菜单                         打开主菜单
+导入 PATH                    导入书籍
+书架                         查看书架
+阅读 TARGET                  按序号、id、标题片段或路径阅读
+查词 WORD                    查词
+导入词典 PATH                导入 Yomitan 词典 zip 或目录
+制卡 WORD                    写入 CSV 或发送到 AnkiConnect
+统计                         查看阅读统计
+同步 [auto|export|import]    同步阅读进度
+设置                         打开设置
+诊断                         检查运行环境
+```
+
+英文命令 `menu`, `import`, `shelf`, `read`, `lookup`, `dict-import`, `card`, `stats`, `sync`, `settings`, `doctor` 也可用。
+
+## 从源码运行
+
+```bash
+python3 -m pip install -e .
+hoshi
+```
+
+不安装直接运行：
+
+```bash
+python3 -m hoshi_terminal menu
+```
+
+## 数据目录
+
+- Windows: `%APPDATA%\HoshiReaderTerminal`
+- macOS: `~/Library/Application Support/HoshiReaderTerminal`
+- Linux: `~/.local/share/hoshi-reader-terminal`
+
+便携运行：
+
+```bash
+HOSHI_TERMINAL_HOME=.hoshi-terminal python3 -m hoshi_terminal 书架
+```
+
+## 开发
+
+```bash
+python3 -m unittest discover -s tests
+python3 scripts/generate_readme_assets.py
+python3 scripts/build_packages.py
+```
+
+带 tag 的发布会由 GitHub Actions 在 Windows、macOS、Linux 上用 PyInstaller 构建独立包。Linux job 还会发布 `.deb` 包。
+
+## 隐私和数据
+
+Hoshi Reader Terminal 会把导入的书、词典、制卡 CSV、阅读进度、划线、统计和设置保存在本地数据目录。同步只使用用户设置的本地文件夹。Anki 制卡只会访问你设置的 AnkiConnect 地址。
+
+## 致谢
+
+菜单、阅读、辞典、Anki 和同步的轮廓参考自 Hoshi Reader iOS / Android。这个仓库没有复制上游源码，是一个终端恶搞版实现。
+
+## License
+
+MIT License，见 [LICENSE](LICENSE)。

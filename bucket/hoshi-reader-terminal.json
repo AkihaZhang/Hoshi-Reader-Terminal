@@ -1,0 +1,19 @@
+{
+  "version": "0.1.2",
+  "description": "Terminal reader inspired by Hoshi Reader",
+  "homepage": "https://github.com/AkihaZhang/Hoshi-Reader-Terminal",
+  "license": "MIT",
+  "url": "https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/download/v0.1.2/Hoshi-Reader-Terminal-0.1.2-windows-standalone.zip",
+  "hash": "skip",
+  "extract_dir": "Hoshi-Reader-Terminal-0.1.2-windows-standalone",
+  "bin": [
+    [
+      "hoshi.exe",
+      "hoshi"
+    ],
+    [
+      "hoshi.exe",
+      "hoshi-terminal"
+    ]
+  ]
+}

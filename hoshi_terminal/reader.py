@@ -58,8 +58,8 @@ def render_page(title: str, page: Page, total_pages: int, vertical: bool = False
     content = render_vertical(page.text) if vertical else page.text
     footer = "\n".join(
         [
-            style("Enter/n 下一页    p 上一页       /单词 查词", DIM),
-            style("a 单词 制卡      h 备注/划线    v 纵书    s 统计    q 退出", DIM),
+            style("Enter/n 下一页    p 上一页    v 纵书    s 统计    q 退出", DIM),
+            style("查词：/読みました    制卡：a 読む    划线备注：h 备注内容", DIM),
         ]
     )
     return "\n".join([header, ruler, content, ruler, footer])

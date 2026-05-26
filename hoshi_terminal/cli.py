@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import sys
 import time
+import zipfile
 
 from . import __version__
 from .anki import AnkiConnectError, add_note, settings_from_dict, version as ankiconnect_version
@@ -152,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     dict_import.add_argument("path", metavar="路径")
     dict_import.set_defaults(func=cmd_dict_import)
 
-    mine = subparsers.add_parser("mine", aliases=["挖矿"], help="追加一条 Anki 可导入 CSV")
+    mine = subparsers.add_parser("card", aliases=["制卡", "mine", "挖矿"], help="制卡：写入 CSV 或发送到 AnkiConnect")
     mine.add_argument("word", metavar="词")
     mine.add_argument("--sentence", default="", help="例句")
     mine.add_argument("--note", default="", help="备注")
@@ -328,7 +329,7 @@ def interactive_loop(
             word = command[2:].strip()
             sentence = sentence_around(page.text, word)
             card_path = library.mine_card(word, sentence=sentence)
-            print(style("已挖矿", MAGENTA), f"{word} -> {card_path}")
+            print(style("已制卡", MAGENTA), f"{word} -> {card_path}")
             _read_input(style("按 Enter 继续", DIM))
         elif command.startswith("h"):
             note = command[1:].strip()
@@ -614,7 +615,7 @@ def _bookshelf_settings() -> None:
 
 
 def _menu_mine() -> None:
-    word = _read_input("请输入要挖的词：").strip()
+    word = _read_input("请输入要制卡的词：").strip()
     if not word:
         return
     sentence = _read_input("例句（可留空）：").strip()
@@ -753,10 +754,10 @@ def _settings_anki() -> None:
         print(clear_screen(), end="")
         print(banner())
         print(style("Anki", BOLD))
-        print(f"挖矿模式: {settings['anki_mode']}")
+        print(f"制卡模式: {settings['anki_mode']}")
         print(f"牌组: {settings['anki_deck']}")
         print(f"模板: {settings['anki_model']}")
-        print("1. 挖矿一个词")
+        print("1. 制卡一个词")
         print("2. AnkiConnect")
         print("3. 修改牌组")
         print("4. 修改模板")
@@ -926,14 +927,28 @@ def _advanced_sync() -> None:
 
 def _advanced_backup() -> None:
     library = Library()
-    target_base = library.root / f"hoshi-terminal-backup-{time.strftime('%Y%m%d-%H%M%S')}"
     try:
-        archive = shutil.make_archive(str(target_base), "zip", library.root)
+        archive = create_backup(library)
     except Exception as exc:
         print(style(f"备份失败：{exc}", RED))
     else:
         print(style("备份完成", GREEN), archive)
     _pause()
+
+
+def create_backup(library: Library) -> Path:
+    backup_dir = library.root.parent / f"{library.root.name}-backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    archive = backup_dir / f"hoshi-terminal-backup-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    root = library.root.resolve()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as backup:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.name.startswith("hoshi-terminal-backup-") and path.suffix == ".zip":
+                continue
+            backup.write(path, path.resolve().relative_to(root))
+    return archive
 
 
 def _settings_about() -> None:
@@ -976,7 +991,7 @@ def mine_word(word: str, sentence: str = "", note: str = "") -> str:
     if not outputs:
         csv_path = library.mine_card(word, sentence=sentence, note=note)
         outputs.append(f"CSV: {csv_path}")
-    return style("已挖矿", MAGENTA) + " " + f"{word} -> " + " | ".join(outputs)
+    return style("已制卡", MAGENTA) + " " + f"{word} -> " + " | ".join(outputs)
 
 
 def find_book_files(root: Path) -> list[Path]:
