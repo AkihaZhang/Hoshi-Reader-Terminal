@@ -40,6 +40,8 @@ Hoshi Reader Terminal 是一个能在 Windows、macOS、Linux 主流终端里运
 
 仓库内已经生成三种系统的便携包：
 
+也可以从 [Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.0) 下载同一批安装包。
+
 | 系统 | 安装包 |
 | --- | --- |
 | Windows | [`dist/Hoshi-Reader-Terminal-0.1.0-windows.zip`](dist/Hoshi-Reader-Terminal-0.1.0-windows.zip) |
