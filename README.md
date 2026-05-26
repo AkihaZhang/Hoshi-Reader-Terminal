@@ -1,4 +1,4 @@
-# Hoshi Reader Terminal ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![Standalone](https://img.shields.io/badge/standalone-no%20Python%20needed-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
+# Hoshi Reader Terminal ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![Package Managers](https://img.shields.io/badge/install-brew%20%7C%20scoop%20%7C%20deb-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -61,13 +61,13 @@ Regular Hoshi is a little too comfortable, so this version moves light-novel rea
 
 ## Download
 
-Download standalone packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.2). Standalone packages include the runtime and do not require Python.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.2). Portable zip/tar packages require Python 3.10+. Package manager installs handle the Python dependency for you.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.2-windows-standalone.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.2-macos-standalone.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.2-linux-standalone.tar.gz` or `hoshi-reader-terminal_0.1.2_amd64.deb` |
+| Windows | `Hoshi-Reader-Terminal-0.1.2-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.2-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.2-linux.tar.gz` or `hoshi-reader-terminal_0.1.2_all.deb` |
 
 After installation, run:
 
@@ -85,8 +85,8 @@ brew install AkihaZhang/Hoshi-Reader-Terminal/hoshi-reader-terminal
 scoop bucket add hoshi-reader-terminal https://github.com/AkihaZhang/Hoshi-Reader-Terminal
 scoop install hoshi-reader-terminal
 
-# Debian / Ubuntu
-sudo apt install ./hoshi-reader-terminal_0.1.2_amd64.deb
+# Debian / Ubuntu, installs python3 dependency if needed
+sudo apt install ./hoshi-reader-terminal_0.1.2_all.deb
 ```
 
 ## Commands

@@ -1,4 +1,4 @@
-# Hoshi Reader Terminal ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![独立包](https://img.shields.io/badge/standalone-无需%20Python-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
+# Hoshi Reader Terminal ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![包管理器](https://img.shields.io/badge/install-brew%20%7C%20scoop%20%7C%20deb-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 [English](README.md) | **简体中文**
 
@@ -61,13 +61,13 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.2) 下载独立安装包。`standalone` 包已经包含运行时，不需要另装 Python。
+从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.2) 下载便携包。zip/tar 便携包需要 Python 3.10+；通过包管理器安装时，Python 依赖会由包管理器处理。
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.2-windows-standalone.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.2-macos-standalone.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.2-linux-standalone.tar.gz` 或 `hoshi-reader-terminal_0.1.2_amd64.deb` |
+| Windows | `Hoshi-Reader-Terminal-0.1.2-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.2-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.2-linux.tar.gz` 或 `hoshi-reader-terminal_0.1.2_all.deb` |
 
 安装后运行：
 
@@ -85,8 +85,8 @@ brew install AkihaZhang/Hoshi-Reader-Terminal/hoshi-reader-terminal
 scoop bucket add hoshi-reader-terminal https://github.com/AkihaZhang/Hoshi-Reader-Terminal
 scoop install hoshi-reader-terminal
 
-# Debian / Ubuntu
-sudo apt install ./hoshi-reader-terminal_0.1.2_amd64.deb
+# Debian / Ubuntu，会按需安装 python3 依赖
+sudo apt install ./hoshi-reader-terminal_0.1.2_all.deb
 ```
 
 ## 命令

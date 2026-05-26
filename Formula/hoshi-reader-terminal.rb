@@ -1,16 +1,16 @@
 class HoshiReaderTerminal < Formula
+  include Language::Python::Virtualenv
+
   desc "Terminal reader inspired by Hoshi Reader"
   homepage "https://github.com/AkihaZhang/Hoshi-Reader-Terminal"
-  url "https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/download/v0.1.2/Hoshi-Reader-Terminal-0.1.2-macos-standalone.tar.gz"
+  url "https://github.com/AkihaZhang/Hoshi-Reader-Terminal/archive/refs/tags/v0.1.2.tar.gz"
   sha256 :no_check
   license "MIT"
 
+  depends_on "python@3.12"
+
   def install
-    package = Dir["Hoshi-Reader-Terminal-*-macos-standalone"].first
-    bin.install "#{package}/hoshi"
-    prefix.install "#{package}/examples"
-    doc.install "#{package}/README.md"
-    doc.install "#{package}/README.zh-CN.md"
+    virtualenv_install_with_resources
   end
 
   test do
