@@ -100,7 +100,6 @@ def logo_lines() -> list[str]:
     # Rasterized from the upstream Hoshi icon shape into terminal cells.
     # Dense ASCII reads more clearly than braille on light terminal themes.
     icon = [
-        "                           ,;+yhh+:",
         "         m@@mh++oyhhdm@@@@@@@@@@@@@@Ny,",
         "          m@@@@@@@@@Nmdhhyo+iiy@@@@@@@h",
         "           @@@@N      .:ii;.  ;@@@@@@,",
