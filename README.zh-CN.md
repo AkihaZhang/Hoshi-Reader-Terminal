@@ -4,7 +4,7 @@
 
 一个受 [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) 和 [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android) 启发的终端日语 EPUB 阅读器，支持书库、Yomitan 查词、Anki 制卡、阅读统计和本地进度同步。
 
-普通 Hoshi 太像娱乐软件，不够赛博苦行僧。Hoshi Reader Terminal 把轻小说阅读、查词、挖卡和进度同步塞进终端，让你假装自己是 Unix 老登，也顺手解决 Hoshi 过于好用的问题。
+普通 Hoshi 太像娱乐软件，不够赛博苦行僧。Hoshi Reader Terminal 把轻小说阅读、查词、制卡和进度同步塞进终端，让你假装自己是 Unix 老登，也顺手解决 Hoshi 过于好用的问题。
 
 <p align="center">
   <img src="docs/images/01-menu.svg" alt="主菜单" width="760">
@@ -38,7 +38,8 @@
 
 ### 查词
 
-- 支持导入 Yomitan 词典目录或 zip。
+- 支持导入 Yomitan Term / Frequency / Pitch 三类词典目录或 zip。
+- 可以启用、停用词典，并调整同类词典的查词优先级。
 - 可以从查词菜单、命令行、阅读器内部查词。
 - 带简单日语活用还原，覆盖常见礼貌形和过去式。
 
@@ -61,13 +62,13 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.2) 下载便携包。zip/tar 便携包需要 Python 3.10+；通过包管理器安装时，Python 依赖会由包管理器处理。
+从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.3) 下载便携包。zip/tar 便携包需要 Python 3.10+；通过包管理器安装时，Python 依赖会由包管理器处理。
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.2-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.2-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.2-linux.tar.gz` 或 `hoshi-reader-terminal_0.1.2_all.deb` |
+| Windows | `Hoshi-Reader-Terminal-0.1.3-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.3-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.3-linux.tar.gz` 或 `hoshi-reader-terminal_0.1.3_all.deb` |
 
 安装后运行：
 
@@ -78,15 +79,16 @@ hoshi
 ## 包管理器
 
 ```bash
-# macOS / Linuxbrew
-brew install AkihaZhang/Hoshi-Reader-Terminal/hoshi-reader-terminal
+# macOS / Linuxbrew，会按需安装 Python
+brew install --formula https://raw.githubusercontent.com/AkihaZhang/Hoshi-Reader-Terminal/main/Formula/hoshi-reader-terminal.rb
 
-# Windows / Scoop
+# Windows / Scoop，会按需安装 Python
 scoop bucket add hoshi-reader-terminal https://github.com/AkihaZhang/Hoshi-Reader-Terminal
 scoop install hoshi-reader-terminal
 
-# Debian / Ubuntu，会按需安装 python3 依赖
-sudo apt install ./hoshi-reader-terminal_0.1.2_all.deb
+# Debian / Ubuntu，从 GitHub Release 下载，并按需安装 python3 依赖
+curl -L https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/download/v0.1.3/hoshi-reader-terminal_0.1.3_all.deb -o /tmp/hoshi-reader-terminal.deb
+sudo apt install /tmp/hoshi-reader-terminal.deb
 ```
 
 ## 命令
@@ -98,6 +100,9 @@ sudo apt install ./hoshi-reader-terminal_0.1.2_all.deb
 阅读 TARGET                  按序号、id、标题片段或路径阅读
 查词 WORD                    查词
 导入词典 PATH                导入 Yomitan 词典 zip 或目录
+词典列表 [TYPE]              查看 Term / Frequency / Pitch 词典
+词典排序 TYPE FROM TO        调整同类词典优先级
+词典开关 TYPE INDEX [状态]   启用或停用词典
 制卡 WORD                    写入 CSV 或发送到 AnkiConnect
 统计                         查看阅读统计
 同步 [auto|export|import]    同步阅读进度
@@ -140,7 +145,7 @@ python3 scripts/generate_readme_assets.py
 python3 scripts/build_packages.py
 ```
 
-带 tag 的发布会由 GitHub Actions 在 Windows、macOS、Linux 上用 PyInstaller 构建独立包。Linux job 还会发布 `.deb` 包。
+发布包可以用 `scripts/build_packages.py` 生成。Homebrew、Scoop 和 deb 安装会通过包管理器处理 Python 依赖。
 
 ## 隐私和数据
 

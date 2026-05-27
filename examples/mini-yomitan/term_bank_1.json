@@ -1,5 +1,5 @@
 [
   ["読む", "よむ", "", "", 0, ["to read", "to count; to predict"], 1, ""],
-  ["星", "ほし", "", "", 0, ["star", "a reader project name with excellent taste"], 2, ""],
-  ["端末", "たんまつ", "", "", 0, ["terminal", "device at the end of the GUI food chain"], 3, ""]
+  ["星", "ほし", "", "", 0, ["star", "project name"], 2, ""],
+  ["端末", "たんまつ", "", "", 0, ["terminal", "text-based environment"], 3, ""]
 ]

@@ -1,11 +1,11 @@
 {
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Terminal reader inspired by Hoshi Reader",
   "homepage": "https://github.com/AkihaZhang/Hoshi-Reader-Terminal",
   "license": "MIT",
-  "url": "https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/download/v0.1.2/Hoshi-Reader-Terminal-0.1.2-windows.zip",
-  "hash": "skip",
-  "extract_dir": "Hoshi-Reader-Terminal-0.1.2-windows",
+  "url": "https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/download/v0.1.3/Hoshi-Reader-Terminal-0.1.3-windows.zip",
+  "hash": "bc179d091de607686251c950b9a52e51d9475948ca92c0b91c773649f032b000",
+  "extract_dir": "Hoshi-Reader-Terminal-0.1.3-windows",
   "depends": "python",
   "bin": [
     [

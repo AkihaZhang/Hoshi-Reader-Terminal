@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import Iterable
+from typing import Callable, Iterable
 import json
 import re
+import sqlite3
 import zipfile
 
 
@@ -37,6 +38,15 @@ BUILTIN_ENTRIES = [
 ]
 
 
+DICTIONARY_TYPES = ("term", "frequency", "pitch")
+IMPORT_CHUNK_SIZE = 10_000
+TYPE_LABELS = {
+    "term": "Term / 释义",
+    "frequency": "Frequency / 频率",
+    "pitch": "Pitch / 音高",
+}
+
+
 @dataclass(frozen=True)
 class LookupResult:
     term: str
@@ -45,15 +55,32 @@ class LookupResult:
     dictionary: str
     matched: str
     note: str = ""
+    frequencies: list[str] = field(default_factory=list)
+    pitches: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class DictionaryInfo:
+    id: int
+    title: str
+    type: str
+    source_path: str
+    revision: str
+    enabled: bool
+    priority: int
+    entry_count: int
 
 
 class DictionaryManager:
     def __init__(self, data_file: Path) -> None:
         self.data_file = data_file
-        self.entries = self._load_entries()
+        self.db_file = data_file.with_suffix(".sqlite3")
+        self.db_file.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+        self._migrate_legacy_json()
 
     def import_yomitan(self, path: str | Path) -> int:
-        source = Path(path)
+        source = Path(path).expanduser()
         if source.is_dir() and not (source / "index.json").exists():
             count = 0
             for candidate in find_yomitan_sources(source):
@@ -62,28 +89,11 @@ class DictionaryManager:
                 count += self.import_yomitan(candidate)
             return count
 
-        imported: list[dict[str, object]] = []
-        if source.is_dir():
-            imported.extend(_read_yomitan_dir(source))
-        elif source.suffix.lower() == ".zip":
-            with TemporaryDirectory() as temp_dir:
-                with zipfile.ZipFile(source) as archive:
-                    archive.extractall(temp_dir)
-                imported.extend(_read_yomitan_dir(Path(temp_dir)))
-        else:
-            raise ValueError("词典必须是 Yomitan zip 文件或目录")
-
-        existing_keys = {(entry["term"], entry.get("reading", ""), entry.get("dictionary", "")) for entry in self.entries}
-        count = 0
-        for entry in imported:
-            key = (entry["term"], entry.get("reading", ""), entry.get("dictionary", ""))
-            if key in existing_keys:
-                continue
-            self.entries.append(entry)
-            existing_keys.add(key)
-            count += 1
-        self._save_entries()
-        return count
+        if source.is_dir() and (source / "index.json").exists():
+            return self._import_source(source, _DirectoryReader(source))
+        if source.is_file() and source.suffix.lower() == ".zip":
+            return self._import_source(source, _ZipReader(source))
+        raise ValueError("词典必须是 Yomitan zip 文件或目录")
 
     def lookup(self, word: str, limit: int = 8) -> list[LookupResult]:
         needle = word.strip()
@@ -97,45 +107,454 @@ class DictionaryManager:
 
         results: list[LookupResult] = []
         seen: set[tuple[str, str, str]] = set()
-        for candidate, note in candidates:
-            for entry in self._iter_entries():
-                if entry["term"] != candidate and entry.get("reading", "") != candidate:
-                    continue
-                key = (str(entry["term"]), str(entry.get("reading", "")), str(entry.get("dictionary", "")))
-                if key in seen:
-                    continue
-                seen.add(key)
-                results.append(
-                    LookupResult(
-                        term=str(entry["term"]),
-                        reading=str(entry.get("reading", "")),
-                        definitions=[str(item) for item in entry.get("definitions", [])],
-                        dictionary=str(entry.get("dictionary", "未知词典")),
-                        matched=candidate,
-                        note="" if note == "exact" else note,
+        with self._connect() as db:
+            for candidate, note in candidates:
+                for row in self._lookup_term_rows(db, candidate, limit):
+                    key = (str(row["term"]), str(row["reading"]), str(row["dictionary"]))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    term = str(row["term"])
+                    reading = str(row["reading"] or "")
+                    results.append(
+                        LookupResult(
+                            term=term,
+                            reading=reading,
+                            definitions=json.loads(str(row["definitions"] or "[]")),
+                            dictionary=str(row["dictionary"]),
+                            matched=candidate,
+                            note="" if note == "exact" else note,
+                            frequencies=self._lookup_frequency_rows(db, term, reading),
+                            pitches=self._lookup_pitch_rows(db, term, reading),
+                        )
                     )
-                )
-                if len(results) >= limit:
-                    return results
+                    if len(results) >= limit:
+                        return results
+
+                for entry in BUILTIN_ENTRIES:
+                    if entry["term"] != candidate and entry.get("reading", "") != candidate:
+                        continue
+                    key = (str(entry["term"]), str(entry.get("reading", "")), str(entry.get("dictionary", "")))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    term = str(entry["term"])
+                    reading = str(entry.get("reading", ""))
+                    results.append(
+                        LookupResult(
+                            term=term,
+                            reading=reading,
+                            definitions=[str(item) for item in entry.get("definitions", [])],
+                            dictionary=str(entry.get("dictionary", "内置辞书")),
+                            matched=candidate,
+                            note="" if note == "exact" else note,
+                            frequencies=self._lookup_frequency_rows(db, term, reading),
+                            pitches=self._lookup_pitch_rows(db, term, reading),
+                        )
+                    )
+                    if len(results) >= limit:
+                        return results
+
+            if not results:
+                frequencies = self._lookup_frequency_rows(db, needle, "")
+                pitches = self._lookup_pitch_rows(db, needle, "")
+                if frequencies or pitches:
+                    results.append(
+                        LookupResult(
+                            term=needle,
+                            reading="",
+                            definitions=[],
+                            dictionary="频率 / 音高",
+                            matched=needle,
+                            frequencies=frequencies,
+                            pitches=pitches,
+                        )
+                    )
         return results
 
-    def _iter_entries(self) -> Iterable[dict[str, object]]:
-        yield from self.entries
-        yield from BUILTIN_ENTRIES
+    def dictionaries(self, dict_type: str | None = None) -> list[DictionaryInfo]:
+        where = ""
+        params: tuple[object, ...] = ()
+        if dict_type:
+            where = "WHERE type = ?"
+            params = (dict_type,)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                SELECT id, title, type, source_path, revision, enabled, priority, entry_count
+                FROM dictionaries
+                {where}
+                ORDER BY type, priority, title COLLATE NOCASE
+                """,
+                params,
+            ).fetchall()
+        return [
+            DictionaryInfo(
+                id=int(row["id"]),
+                title=str(row["title"]),
+                type=str(row["type"]),
+                source_path=str(row["source_path"] or ""),
+                revision=str(row["revision"] or ""),
+                enabled=bool(row["enabled"]),
+                priority=int(row["priority"]),
+                entry_count=int(row["entry_count"] or 0),
+            )
+            for row in rows
+        ]
 
-    def _load_entries(self) -> list[dict[str, object]]:
+    def entry_count(self) -> int:
+        with self._connect() as db:
+            row = db.execute("SELECT COALESCE(SUM(entry_count), 0) AS count FROM dictionaries").fetchone()
+        return int(row["count"] if row else 0)
+
+    def counts_by_type(self) -> dict[str, int]:
+        counts = {dict_type: 0 for dict_type in DICTIONARY_TYPES}
+        with self._connect() as db:
+            rows = db.execute("SELECT type, COALESCE(SUM(entry_count), 0) AS count FROM dictionaries GROUP BY type").fetchall()
+        for row in rows:
+            counts[str(row["type"])] = int(row["count"])
+        return counts
+
+    def set_enabled(self, dict_id: int, enabled: bool) -> None:
+        with self._connect() as db:
+            db.execute("UPDATE dictionaries SET enabled = ? WHERE id = ?", (1 if enabled else 0, dict_id))
+
+    def move_dictionary(self, dict_type: str, from_index: int, to_index: int) -> None:
+        dict_type = normalize_dictionary_type(dict_type)
+        items = self.dictionaries(dict_type)
+        if not items or from_index < 0 or from_index >= len(items):
+            raise ValueError("词典序号无效")
+        moved = items.pop(from_index)
+        items.insert(max(0, min(to_index, len(items))), moved)
+        with self._connect() as db:
+            for priority, item in enumerate(items):
+                db.execute("UPDATE dictionaries SET priority = ? WHERE id = ?", (priority, item.id))
+
+    def _import_source(self, source: Path, reader: "_YomitanReader") -> int:
+        index = reader.index()
+        dictionary_name = str(index.get("title") or index.get("name") or source.stem)
+        revision = str(index.get("revision") or "")
+        type_hint = infer_dictionary_type(source, dictionary_name)
+        already_imported = self._imported_types(dictionary_name)
+        total = 0
+        for dict_type, rows in reader.iter_records(dictionary_name, type_hint):
+            if dict_type in already_imported:
+                continue
+            total += self._insert_records(
+                dict_type=dict_type,
+                title=dictionary_name,
+                revision=revision,
+                source_path=str(source),
+                rows=rows,
+            )
+        return total
+
+    def _insert_records(
+        self,
+        dict_type: str,
+        title: str,
+        revision: str,
+        source_path: str,
+        rows: Iterable[dict[str, object]],
+    ) -> int:
+        rows = list(rows)
+        if not rows:
+            return 0
+        with self._connect() as db:
+            existing = db.execute(
+                "SELECT id, entry_count FROM dictionaries WHERE title = ? AND type = ?",
+                (title, dict_type),
+            ).fetchone()
+            if existing:
+                dictionary_id = int(existing["id"])
+                previous_count = int(existing["entry_count"] or 0)
+            else:
+                priority = self._next_priority(db, dict_type)
+                cursor = db.execute(
+                    """
+                    INSERT INTO dictionaries(title, type, source_path, revision, enabled, priority, entry_count, imported_at)
+                    VALUES (?, ?, ?, ?, 1, ?, 0, ?)
+                    """,
+                    (title, dict_type, source_path, revision, priority, datetime.now().isoformat(timespec="seconds")),
+                )
+                dictionary_id = int(cursor.lastrowid)
+                previous_count = 0
+
+            if dict_type == "term":
+                db.executemany(
+                    """
+                    INSERT INTO entries(dictionary_id, term, reading, definitions)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        (
+                            dictionary_id,
+                            str(row["term"]),
+                            str(row.get("reading", "")),
+                            json.dumps(row.get("definitions", []), ensure_ascii=False),
+                        )
+                        for row in rows
+                    ),
+                )
+            elif dict_type == "frequency":
+                db.executemany(
+                    """
+                    INSERT INTO frequencies(dictionary_id, term, reading, display, value)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        (
+                            dictionary_id,
+                            str(row["term"]),
+                            str(row.get("reading", "")),
+                            str(row.get("display", "")),
+                            str(row.get("value", "")),
+                        )
+                        for row in rows
+                    ),
+                )
+            elif dict_type == "pitch":
+                db.executemany(
+                    """
+                    INSERT INTO pitches(dictionary_id, term, reading, summary)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        (
+                            dictionary_id,
+                            str(row["term"]),
+                            str(row.get("reading", "")),
+                            str(row.get("summary", "")),
+                        )
+                        for row in rows
+                    ),
+                )
+            db.execute(
+                "UPDATE dictionaries SET entry_count = ?, source_path = ?, revision = ? WHERE id = ?",
+                (previous_count + len(rows), source_path, revision, dictionary_id),
+            )
+        return len(rows)
+
+    def _lookup_term_rows(self, db: sqlite3.Connection, word: str, limit: int) -> list[sqlite3.Row]:
+        return db.execute(
+            """
+            SELECT e.term, e.reading, e.definitions, d.title AS dictionary
+            FROM entries e
+            JOIN dictionaries d ON d.id = e.dictionary_id
+            WHERE d.enabled = 1
+              AND d.type = 'term'
+              AND (e.term = ? OR e.reading = ?)
+            ORDER BY d.priority, e.rowid
+            LIMIT ?
+            """,
+            (word, word, limit),
+        ).fetchall()
+
+    def _lookup_frequency_rows(self, db: sqlite3.Connection, term: str, reading: str, limit: int = 8) -> list[str]:
+        rows = db.execute(
+            """
+            SELECT d.title AS dictionary, f.reading, f.display, f.value
+            FROM frequencies f
+            JOIN dictionaries d ON d.id = f.dictionary_id
+            WHERE d.enabled = 1
+              AND d.type = 'frequency'
+              AND f.term = ?
+              AND (f.reading = '' OR ? = '' OR f.reading = ?)
+            ORDER BY d.priority, f.rowid
+            LIMIT ?
+            """,
+            (term, reading, reading, limit),
+        ).fetchall()
+        return [_format_aux_row(row) for row in rows]
+
+    def _lookup_pitch_rows(self, db: sqlite3.Connection, term: str, reading: str, limit: int = 8) -> list[str]:
+        rows = db.execute(
+            """
+            SELECT d.title AS dictionary, p.reading, p.summary AS display
+            FROM pitches p
+            JOIN dictionaries d ON d.id = p.dictionary_id
+            WHERE d.enabled = 1
+              AND d.type = 'pitch'
+              AND p.term = ?
+              AND (p.reading = '' OR ? = '' OR p.reading = ?)
+            ORDER BY d.priority, p.rowid
+            LIMIT ?
+            """,
+            (term, reading, reading, limit),
+        ).fetchall()
+        return [_format_aux_row(row) for row in rows]
+
+    def _init_db(self) -> None:
+        with self._connect() as db:
+            db.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS dictionaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    source_path TEXT DEFAULT '',
+                    revision TEXT DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    entry_count INTEGER NOT NULL DEFAULT 0,
+                    imported_at TEXT DEFAULT '',
+                    UNIQUE(title, type)
+                );
+                CREATE TABLE IF NOT EXISTS entries (
+                    dictionary_id INTEGER NOT NULL,
+                    term TEXT NOT NULL,
+                    reading TEXT NOT NULL DEFAULT '',
+                    definitions TEXT NOT NULL,
+                    FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS frequencies (
+                    dictionary_id INTEGER NOT NULL,
+                    term TEXT NOT NULL,
+                    reading TEXT NOT NULL DEFAULT '',
+                    display TEXT NOT NULL DEFAULT '',
+                    value TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS pitches (
+                    dictionary_id INTEGER NOT NULL,
+                    term TEXT NOT NULL,
+                    reading TEXT NOT NULL DEFAULT '',
+                    summary TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_entries_term ON entries(term);
+                CREATE INDEX IF NOT EXISTS idx_entries_reading ON entries(reading);
+                CREATE INDEX IF NOT EXISTS idx_frequencies_term ON frequencies(term);
+                CREATE INDEX IF NOT EXISTS idx_frequencies_reading ON frequencies(reading);
+                CREATE INDEX IF NOT EXISTS idx_pitches_term ON pitches(term);
+                CREATE INDEX IF NOT EXISTS idx_pitches_reading ON pitches(reading);
+                """
+            )
+
+    def _migrate_legacy_json(self) -> None:
         if not self.data_file.exists():
-            return []
-        with self.data_file.open("r", encoding="utf-8") as handle:
-            loaded = json.load(handle)
+            return
+        with self._connect() as db:
+            has_rows = db.execute("SELECT 1 FROM dictionaries LIMIT 1").fetchone()
+        if has_rows:
+            return
+        try:
+            loaded = json.loads(self.data_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
         if not isinstance(loaded, list):
-            return []
-        return [entry for entry in loaded if isinstance(entry, dict) and "term" in entry]
+            return
+        rows = [
+            {
+                "term": str(entry["term"]),
+                "reading": str(entry.get("reading", "")),
+                "definitions": [str(item) for item in entry.get("definitions", [])],
+            }
+            for entry in loaded
+            if isinstance(entry, dict) and entry.get("term")
+        ]
+        if rows:
+            self._insert_records("term", "旧版导入词典", "", str(self.data_file), rows)
 
-    def _save_entries(self) -> None:
-        self.data_file.parent.mkdir(parents=True, exist_ok=True)
-        with self.data_file.open("w", encoding="utf-8") as handle:
-            json.dump(self.entries, handle, ensure_ascii=False, indent=2)
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.db_file)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        return connection
+
+    @staticmethod
+    def _next_priority(db: sqlite3.Connection, dict_type: str) -> int:
+        row = db.execute("SELECT COALESCE(MAX(priority), -1) + 1 AS priority FROM dictionaries WHERE type = ?", (dict_type,)).fetchone()
+        return int(row["priority"] if row else 0)
+
+    def _imported_types(self, title: str) -> set[str]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT type FROM dictionaries WHERE title = ? AND entry_count > 0",
+                (title,),
+            ).fetchall()
+        return {str(row["type"]) for row in rows}
+
+
+class _YomitanReader:
+    def index(self) -> dict[str, object]:
+        raise NotImplementedError
+
+    def iter_records(self, dictionary_name: str, type_hint: str) -> Iterable[tuple[str, list[dict[str, object]]]]:
+        for name, bank in self.bank_items("term_bank_"):
+            if not isinstance(bank, list):
+                continue
+            dict_type = "pitch" if type_hint == "pitch" else "term"
+            parser = _parse_pitch_bank_row if dict_type == "pitch" else _parse_term_bank_row
+            records: list[dict[str, object]] = []
+            for row in bank:
+                parsed = parser(row, dictionary_name)
+                if parsed:
+                    records.append(parsed)
+                if len(records) >= IMPORT_CHUNK_SIZE:
+                    yield dict_type, records
+                    records = []
+            if records:
+                yield dict_type, records
+        for name, bank in self.bank_items("term_meta_bank_"):
+            if not isinstance(bank, list):
+                continue
+            grouped: dict[str, list[dict[str, object]]] = {"frequency": [], "pitch": []}
+            for row in bank:
+                parsed_type, parsed = _parse_term_meta_bank_row(row)
+                if parsed_type and parsed:
+                    grouped[parsed_type].append(parsed)
+                    if len(grouped[parsed_type]) >= IMPORT_CHUNK_SIZE:
+                        yield parsed_type, grouped[parsed_type]
+                        grouped[parsed_type] = []
+            for dict_type, rows in grouped.items():
+                if rows:
+                    yield dict_type, rows
+
+    def bank_items(self, prefix: str) -> Iterable[tuple[str, object]]:
+        raise NotImplementedError
+
+
+class _DirectoryReader(_YomitanReader):
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def index(self) -> dict[str, object]:
+        data = _read_json(self.root / "index.json", default={})
+        return data if isinstance(data, dict) else {}
+
+    def bank_items(self, prefix: str) -> Iterable[tuple[str, object]]:
+        for bank_path in sorted(self.root.glob(f"{prefix}*.json"), key=_natural_key):
+            yield bank_path.name, _read_json(bank_path, default=[])
+
+
+class _ZipReader(_YomitanReader):
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.archive = zipfile.ZipFile(path)
+        self.names = self.archive.namelist()
+        self.base = self._base_path()
+
+    def index(self) -> dict[str, object]:
+        index_name = f"{self.base}/index.json" if self.base else "index.json"
+        data = json.loads(self.archive.read(index_name))
+        return data if isinstance(data, dict) else {}
+
+    def bank_items(self, prefix: str) -> Iterable[tuple[str, object]]:
+        names = [
+            name
+            for name in self.names
+            if _zip_parent(name) == self.base and Path(name).name.startswith(prefix) and Path(name).name.endswith(".json")
+        ]
+        for name in sorted(names, key=lambda item: _natural_key(Path(item).name)):
+            yield Path(name).name, json.loads(self.archive.read(name))
+
+    def _base_path(self) -> str:
+        for name in self.names:
+            if Path(name).name == "index.json":
+                parent = Path(name).parent.as_posix()
+                return "" if parent == "." else parent
+        return ""
 
 
 def deinflect(word: str) -> list[tuple[str, str]]:
@@ -176,6 +595,85 @@ def deinflect(word: str) -> list[tuple[str, str]]:
     return deduped
 
 
+def normalize_dictionary_type(raw: str) -> str:
+    normalized = raw.strip().lower()
+    aliases = {
+        "1": "term",
+        "term": "term",
+        "terms": "term",
+        "释义": "term",
+        "词典": "term",
+        "辞典": "term",
+        "2": "frequency",
+        "freq": "frequency",
+        "frequency": "frequency",
+        "频率": "frequency",
+        "3": "pitch",
+        "pitch": "pitch",
+        "音高": "pitch",
+        "声调": "pitch",
+    }
+    result = aliases.get(normalized)
+    if result is None:
+        raise ValueError("词典类型必须是 term / frequency / pitch")
+    return result
+
+
+def infer_dictionary_type(source: Path, dictionary_name: str) -> str:
+    parts = " ".join((*source.parts[-3:], dictionary_name)).lower()
+    if "frequency" in parts or "[freq" in parts or "freq]" in parts or "频率" in parts:
+        return "frequency"
+    if "pitch" in parts or "[pitch" in parts or "accent" in parts or "アクセント" in parts or "発音" in parts or "音高" in parts:
+        return "pitch"
+    return "term"
+
+
+def format_results(results: list[LookupResult]) -> str:
+    if not results:
+        return "没有命中。"
+    blocks: list[str] = []
+    for index, result in enumerate(results, start=1):
+        heading = f"{index}. {result.term}"
+        if result.reading:
+            heading += f" [{result.reading}]"
+        if result.note:
+            heading += f"  ({result.note})"
+        lines = [heading, f"   @ {result.dictionary}"]
+        if result.frequencies:
+            lines.append(f"   频率: {' | '.join(result.frequencies)}")
+        if result.pitches:
+            lines.append(f"   音高: {' | '.join(result.pitches)}")
+        for definition in result.definitions[:5]:
+            lines.append(f"   - {_shorten(definition)}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def find_yomitan_sources(path: str | Path) -> list[Path]:
+    source = Path(path).expanduser()
+    if source.is_file() and source.suffix.lower() == ".zip":
+        return [source]
+    if not source.is_dir():
+        return []
+    candidates: list[Path] = []
+    if (source / "index.json").exists():
+        candidates.append(source)
+    candidates.extend(source.rglob("*.zip"))
+    candidates.extend(
+        item.parent
+        for item in source.rglob("index.json")
+        if item.parent != source and (any(item.parent.glob("term_bank_*.json")) or any(item.parent.glob("term_meta_bank_*.json")))
+    )
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in sorted(candidates, key=_source_sort_key):
+        resolved = candidate.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            deduped.append(candidate)
+    return deduped
+
+
 def _polite_stem_forms(stem: str, note: str) -> list[tuple[str, str]]:
     if not stem:
         return []
@@ -199,74 +697,6 @@ def _polite_stem_forms(stem: str, note: str) -> list[tuple[str, str]]:
     return results
 
 
-def format_results(results: list[LookupResult]) -> str:
-    if not results:
-        return "没有命中。词典沉默地看着你。"
-    blocks: list[str] = []
-    for index, result in enumerate(results, start=1):
-        heading = f"{index}. {result.term}"
-        if result.reading:
-            heading += f" [{result.reading}]"
-        if result.note:
-            heading += f"  ({result.note})"
-        definitions = "\n".join(f"   - {_shorten(definition)}" for definition in result.definitions[:5])
-        blocks.append(f"{heading}\n   @ {result.dictionary}\n{definitions}")
-    return "\n\n".join(blocks)
-
-
-def _shorten(text: str, limit: int = 360) -> str:
-    collapsed = re.sub(r"\s+", " ", text).strip()
-    if len(collapsed) <= limit:
-        return collapsed
-    return collapsed[: limit - 1].rstrip() + "…"
-
-
-def find_yomitan_sources(path: str | Path) -> list[Path]:
-    source = Path(path).expanduser()
-    if source.is_file() and source.suffix.lower() == ".zip":
-        return [source]
-    if not source.is_dir():
-        return []
-    candidates: list[Path] = []
-    if (source / "index.json").exists():
-        candidates.append(source)
-    candidates.extend(sorted(source.rglob("*.zip"), key=lambda item: str(item).lower()))
-    candidates.extend(
-        sorted(
-            (
-                item
-                for item in source.rglob("index.json")
-                if item.parent != source and any(item.parent.glob("term_bank_*.json"))
-            ),
-            key=lambda item: str(item.parent).lower(),
-        )
-    )
-    deduped: list[Path] = []
-    seen: set[Path] = set()
-    for candidate in candidates:
-        path_candidate = candidate.parent if candidate.name == "index.json" else candidate
-        resolved = path_candidate.resolve()
-        if resolved not in seen:
-            seen.add(resolved)
-            deduped.append(path_candidate)
-    return deduped
-
-
-def _read_yomitan_dir(path: Path) -> list[dict[str, object]]:
-    index = _read_json(path / "index.json", default={})
-    dictionary_name = str(index.get("title") or index.get("name") or path.name)
-    entries: list[dict[str, object]] = []
-    for bank_path in sorted(path.glob("term_bank_*.json"), key=_natural_key):
-        bank = _read_json(bank_path, default=[])
-        if not isinstance(bank, list):
-            continue
-        for row in bank:
-            parsed = _parse_term_bank_row(row, dictionary_name)
-            if parsed:
-                entries.append(parsed)
-    return entries
-
-
 def _parse_term_bank_row(row: object, dictionary_name: str) -> dict[str, object] | None:
     if not isinstance(row, list) or len(row) < 6:
         return None
@@ -274,8 +704,7 @@ def _parse_term_bank_row(row: object, dictionary_name: str) -> dict[str, object]
     reading = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
     if not term:
         return None
-    glossary = row[5]
-    definitions = _flatten_glossary(glossary)
+    definitions = _flatten_glossary(row[5])
     if not definitions:
         definitions = ["该词条没有可显示的文本释义。"]
     return {
@@ -286,6 +715,63 @@ def _parse_term_bank_row(row: object, dictionary_name: str) -> dict[str, object]
     }
 
 
+def _parse_pitch_bank_row(row: object, dictionary_name: str) -> dict[str, object] | None:
+    parsed = _parse_term_bank_row(row, dictionary_name)
+    if not parsed:
+        return None
+    return {
+        "term": parsed["term"],
+        "reading": parsed.get("reading", ""),
+        "summary": "；".join(str(item) for item in parsed.get("definitions", [])[:3]),
+    }
+
+
+def _parse_term_meta_bank_row(row: object) -> tuple[str | None, dict[str, object] | None]:
+    if not isinstance(row, list) or len(row) < 3:
+        return None, None
+    term = str(row[0]).strip()
+    kind = str(row[1]).strip()
+    data = row[2]
+    if not term:
+        return None, None
+    if kind == "freq":
+        reading, value, display = _parse_frequency_data(data)
+        return "frequency", {"term": term, "reading": reading, "value": value, "display": display}
+    if kind == "pitch":
+        reading, summary = _parse_pitch_data(data)
+        return "pitch", {"term": term, "reading": reading, "summary": summary}
+    return None, None
+
+
+def _parse_frequency_data(data: object) -> tuple[str, str, str]:
+    if isinstance(data, dict):
+        reading = str(data.get("reading") or "")
+        frequency = data.get("frequency")
+        if isinstance(frequency, dict):
+            value = str(frequency.get("value") or data.get("value") or "")
+            display = str(frequency.get("displayValue") or data.get("displayValue") or value)
+        else:
+            value = str(data.get("value") or "")
+            display = str(data.get("displayValue") or value)
+        return reading, value, display
+    return "", str(data), str(data)
+
+
+def _parse_pitch_data(data: object) -> tuple[str, str]:
+    if isinstance(data, dict):
+        reading = str(data.get("reading") or "")
+        pitches = data.get("pitches")
+        if isinstance(pitches, list):
+            positions = []
+            for pitch in pitches:
+                if isinstance(pitch, dict) and "position" in pitch:
+                    positions.append(str(pitch["position"]))
+            if positions:
+                return reading, ",".join(positions)
+        return reading, _shorten(json.dumps(data, ensure_ascii=False), 160)
+    return "", _shorten(str(data), 160)
+
+
 def _flatten_glossary(value: object) -> list[str]:
     results: list[str] = []
     if isinstance(value, str):
@@ -293,17 +779,54 @@ def _flatten_glossary(value: object) -> list[str]:
             results.append(value.strip())
     elif isinstance(value, list):
         for item in value:
-            results.extend(_flatten_glossary(item))
+            if isinstance(item, dict):
+                text = _structured_text(item)
+                if text:
+                    results.append(text)
+            else:
+                results.extend(_flatten_glossary(item))
     elif isinstance(value, dict):
-        if "content" in value:
-            results.extend(_flatten_glossary(value["content"]))
-        elif "text" in value:
-            results.extend(_flatten_glossary(value["text"]))
-        elif "tag" in value:
-            rendered = " ".join(item.strip() for item in value.values() if isinstance(item, str) and item.strip())
-            if rendered.strip():
-                results.append(rendered.strip())
+        text = _structured_text(value)
+        if text:
+            results.append(text)
     return results
+
+
+def _structured_text(value: object) -> str:
+    chunks: list[str] = []
+
+    def walk(item: object) -> None:
+        if isinstance(item, str):
+            if item:
+                chunks.append(item)
+        elif isinstance(item, list):
+            for child in item:
+                walk(child)
+        elif isinstance(item, dict):
+            if "content" in item:
+                walk(item["content"])
+            elif "text" in item:
+                walk(item["text"])
+
+    walk(value)
+    rendered = "".join(chunks)
+    rendered = re.sub(r"\s+", " ", rendered)
+    return rendered.strip()
+
+
+def _format_aux_row(row: sqlite3.Row) -> str:
+    dictionary = str(row["dictionary"])
+    display = str(row["display"] or row["value"] or "").strip() if "value" in row.keys() else str(row["display"] or "").strip()
+    reading = str(row["reading"] or "").strip()
+    suffix = f" [{reading}]" if reading else ""
+    return f"{dictionary}{suffix}: {display}" if display else f"{dictionary}{suffix}"
+
+
+def _shorten(text: str, limit: int = 360) -> str:
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 1].rstrip() + "…"
 
 
 def _read_json(path: Path, default: object) -> object:
@@ -313,5 +836,16 @@ def _read_json(path: Path, default: object) -> object:
         return json.load(handle)
 
 
-def _natural_key(path: Path) -> list[object]:
-    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", path.name)]
+def _natural_key(path: Path | str) -> list[object]:
+    name = path.name if isinstance(path, Path) else str(path)
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
+
+
+def _zip_parent(name: str) -> str:
+    parent = Path(name).parent.as_posix()
+    return "" if parent == "." else parent
+
+
+def _source_sort_key(path: Path) -> tuple[int, str]:
+    order = {"term": 0, "pitch": 1, "frequency": 2}
+    return (order[infer_dictionary_type(path, path.stem)], str(path).lower())

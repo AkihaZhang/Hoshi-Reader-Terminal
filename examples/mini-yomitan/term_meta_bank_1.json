@@ -1,0 +1,6 @@
+[
+  ["読む", "freq", {"reading": "よむ", "frequency": {"value": 440, "displayValue": "440"}}],
+  ["読む", "pitch", {"reading": "よむ", "pitches": [{"position": 1}]}],
+  ["星", "freq", {"reading": "ほし", "frequency": {"value": 1200, "displayValue": "1200"}}],
+  ["星", "pitch", {"reading": "ほし", "pitches": [{"position": 0}]}]
+]

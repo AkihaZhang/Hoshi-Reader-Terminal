@@ -9,7 +9,7 @@ import zipfile
 
 from . import __version__
 from .anki import AnkiConnectError, add_note, settings_from_dict, version as ankiconnect_version
-from .dictionary import DictionaryManager, find_yomitan_sources, format_results
+from .dictionary import DICTIONARY_TYPES, TYPE_LABELS, DictionaryManager, find_yomitan_sources, format_results, normalize_dictionary_type
 from .epub import extract_book
 from .reader import Page, character_count, page_for_position, paginate, render_page, sentence_around
 from .storage import BookRecord, Library, summarize_text_progress
@@ -153,7 +153,23 @@ def build_parser() -> argparse.ArgumentParser:
     dict_import.add_argument("path", metavar="路径")
     dict_import.set_defaults(func=cmd_dict_import)
 
-    mine = subparsers.add_parser("card", aliases=["制卡", "mine", "挖矿"], help="制卡：写入 CSV 或发送到 AnkiConnect")
+    dict_list = subparsers.add_parser("dict-list", aliases=["词典列表"], help="查看已导入词典")
+    dict_list.add_argument("type", nargs="?", metavar="类型", help="term / frequency / pitch")
+    dict_list.set_defaults(func=cmd_dict_list)
+
+    dict_order = subparsers.add_parser("dict-order", aliases=["词典排序"], help="调整词典优先级")
+    dict_order.add_argument("type", metavar="类型", help="term / frequency / pitch")
+    dict_order.add_argument("from_index", type=int, metavar="原序号")
+    dict_order.add_argument("to_index", type=int, metavar="新序号")
+    dict_order.set_defaults(func=cmd_dict_order)
+
+    dict_toggle = subparsers.add_parser("dict-toggle", aliases=["词典开关"], help="启用或停用词典")
+    dict_toggle.add_argument("type", metavar="类型", help="term / frequency / pitch")
+    dict_toggle.add_argument("index", type=int, metavar="序号")
+    dict_toggle.add_argument("state", nargs="?", choices=["on", "off", "启用", "停用"], metavar="状态")
+    dict_toggle.set_defaults(func=cmd_dict_toggle)
+
+    mine = subparsers.add_parser("card", aliases=["制卡", "mine"], help="制卡：写入 CSV 或发送到 AnkiConnect")
     mine.add_argument("word", metavar="词")
     mine.add_argument("--sentence", default="", help="例句")
     mine.add_argument("--note", default="", help="备注")
@@ -247,6 +263,34 @@ def cmd_dict_import(args: argparse.Namespace) -> int:
     manager = DictionaryManager(Library().dictionary_file)
     count = manager.import_yomitan(args.path)
     print(style("词典已导入", GREEN), f"新增 {count} 条")
+    return 0
+
+
+def cmd_dict_list(args: argparse.Namespace) -> int:
+    manager = DictionaryManager(Library().dictionary_file)
+    dict_type = normalize_dictionary_type(args.type) if args.type else None
+    _print_dictionary_table(manager, dict_type)
+    return 0
+
+
+def cmd_dict_order(args: argparse.Namespace) -> int:
+    manager = DictionaryManager(Library().dictionary_file)
+    dict_type = normalize_dictionary_type(args.type)
+    manager.move_dictionary(dict_type, args.from_index - 1, args.to_index - 1)
+    print(style("已调整词典优先级", GREEN), f"{TYPE_LABELS[dict_type]}: {args.from_index} -> {args.to_index}")
+    return 0
+
+
+def cmd_dict_toggle(args: argparse.Namespace) -> int:
+    manager = DictionaryManager(Library().dictionary_file)
+    dict_type = normalize_dictionary_type(args.type)
+    dictionaries = manager.dictionaries(dict_type)
+    if args.index < 1 or args.index > len(dictionaries):
+        raise ValueError("词典序号无效")
+    dictionary = dictionaries[args.index - 1]
+    enabled = not dictionary.enabled if args.state is None else args.state in {"on", "启用"}
+    manager.set_enabled(dictionary.id, enabled)
+    print(style("已保存", GREEN), f"{dictionary.title}: {'启用' if enabled else '停用'}")
     return 0
 
 
@@ -533,7 +577,7 @@ def _menu_lookup() -> None:
     dictionary = DictionaryManager(library.dictionary_file)
     default_path = library.settings["dictionary_path"]
     print(style("词典目录", BOLD), default_path)
-    print(f"已导入词条：{len(dictionary.entries)}")
+    print(f"已导入词条：{dictionary.entry_count()}")
     import_path = _read_input("导入词典路径；输入 d 导入当前词典目录；留空跳过：").strip().strip('"')
     if import_path.lower() == "d":
         import_path = default_path
@@ -573,7 +617,8 @@ def _dictionary_list() -> None:
     manager = DictionaryManager(library.dictionary_file)
     print(style("辞典", BOLD))
     print(f"词典目录: {library.settings['dictionary_path']}")
-    print(f"已导入词条: {len(manager.entries)}")
+    print(f"已导入词条: {manager.entry_count()}")
+    _print_dictionary_table(manager)
     sources = find_yomitan_sources(library.settings["dictionary_path"])
     print(f"目录内可导入词典源: {len(sources)}")
     for index, source in enumerate(sources[:20], start=1):
@@ -584,17 +629,113 @@ def _dictionary_list() -> None:
 
 
 def _dictionary_settings() -> None:
-    library = Library()
-    print(style("辞典设置", BOLD))
-    print(f"词典目录: {library.settings['dictionary_path']}")
-    print("1. 设置词典目录")
-    print("2. 扫描并导入词典目录")
-    print("0. 返回")
-    choice = _read_input(style("请选择：", CYAN)).strip()
-    if choice == "1":
-        _menu_set_path("dictionary_path", "词典目录")
-    elif choice == "2":
-        _settings_import_dictionaries()
+    while True:
+        library = Library()
+        print(style("辞典设置", BOLD))
+        print(f"词典目录: {library.settings['dictionary_path']}")
+        print("1. 设置词典目录")
+        print("2. 扫描并导入词典目录")
+        print("3. 查看词典与优先级")
+        print("4. 调整词典优先级")
+        print("5. 启用 / 停用词典")
+        print("0. 返回")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            _menu_set_path("dictionary_path", "词典目录")
+        elif choice == "2":
+            _settings_import_dictionaries()
+        elif choice == "3":
+            _dictionary_list()
+        elif choice == "4":
+            _dictionary_priority_menu()
+        elif choice == "5":
+            _dictionary_toggle_menu()
+        elif choice in {"0", "q", "Q", "返回"}:
+            return
+        else:
+            print("没有这个辞典设置项。")
+            _pause()
+
+
+def _dictionary_priority_menu() -> None:
+    manager = DictionaryManager(Library().dictionary_file)
+    dict_type = _choose_dictionary_type()
+    if not dict_type:
+        return
+    dictionaries = manager.dictionaries(dict_type)
+    if not dictionaries:
+        print("这个分类还没有导入词典。")
+        _pause()
+        return
+    _print_dictionary_table(manager, dict_type)
+    raw = _read_input("输入 原序号 新序号（例如 3 1，留空返回）：").strip()
+    if not raw:
+        return
+    parts = raw.split()
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        print("格式应为两个数字。")
+        _pause()
+        return
+    try:
+        manager.move_dictionary(dict_type, int(parts[0]) - 1, int(parts[1]) - 1)
+    except ValueError as exc:
+        print(style(str(exc), RED))
+    else:
+        print(style("已调整词典优先级", GREEN))
+    _pause()
+
+
+def _dictionary_toggle_menu() -> None:
+    manager = DictionaryManager(Library().dictionary_file)
+    dict_type = _choose_dictionary_type()
+    if not dict_type:
+        return
+    dictionaries = manager.dictionaries(dict_type)
+    if not dictionaries:
+        print("这个分类还没有导入词典。")
+        _pause()
+        return
+    _print_dictionary_table(manager, dict_type)
+    raw = _read_input("输入序号切换启用状态（留空返回）：").strip()
+    if not raw:
+        return
+    if not raw.isdigit() or int(raw) < 1 or int(raw) > len(dictionaries):
+        print("词典序号无效。")
+        _pause()
+        return
+    dictionary = dictionaries[int(raw) - 1]
+    manager.set_enabled(dictionary.id, not dictionary.enabled)
+    print(style("已保存", GREEN), f"{dictionary.title}: {'停用' if dictionary.enabled else '启用'}")
+    _pause()
+
+
+def _choose_dictionary_type() -> str | None:
+    print("1. Term / 释义")
+    print("2. Frequency / 频率")
+    print("3. Pitch / 音高")
+    raw = _read_input(style("选择分类：", CYAN)).strip()
+    if not raw:
+        return None
+    try:
+        return normalize_dictionary_type(raw)
+    except ValueError as exc:
+        print(style(str(exc), RED))
+        _pause()
+        return None
+
+
+def _print_dictionary_table(manager: DictionaryManager, dict_type: str | None = None) -> None:
+    types = [dict_type] if dict_type else list(DICTIONARY_TYPES)
+    for current_type in types:
+        dictionaries = manager.dictionaries(current_type)
+        print(style(TYPE_LABELS[current_type], BOLD))
+        if not dictionaries:
+            print("  未导入")
+            continue
+        for index, dictionary in enumerate(dictionaries, start=1):
+            state = "开" if dictionary.enabled else "关"
+            revision = f"  {style(dictionary.revision, DIM)}" if dictionary.revision else ""
+            print(f"{index:>2}. [{state}] {dictionary.title}  {dictionary.entry_count} 条{revision}")
 
 
 def _bookshelf_settings() -> None:
@@ -985,7 +1126,7 @@ def mine_word(word: str, sentence: str = "", note: str = "") -> str:
             if anki.mode == "ankiconnect":
                 outputs.append(f"AnkiConnect 失败: {exc}")
             else:
-                outputs.append(f"AnkiConnect 不可用，已保留 CSV: {exc}")
+                outputs.append(f"AnkiConnect 未添加，已保留 CSV: {exc}")
         else:
             outputs.append(f"AnkiConnect: 已添加 note {note_id}")
     if not outputs:

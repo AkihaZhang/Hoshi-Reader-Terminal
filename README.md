@@ -38,7 +38,8 @@ Regular Hoshi is a little too comfortable, so this version moves light-novel rea
 
 ### Lookup
 
-- Import Yomitan dictionaries from folders or zip files.
+- Import Yomitan Term / Frequency / Pitch dictionaries from folders or zip files.
+- Enable, disable, and reorder dictionaries inside each type.
 - Search from the Dictionary menu, the command line, or inside the reader.
 - Includes lightweight Japanese deinflection for common polite and past forms.
 
@@ -61,13 +62,13 @@ Regular Hoshi is a little too comfortable, so this version moves light-novel rea
 
 ## Download
 
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.2). Portable zip/tar packages require Python 3.10+. Package manager installs handle the Python dependency for you.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.3). Portable zip/tar packages require Python 3.10+. Package manager installs handle the Python dependency for you.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.2-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.2-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.2-linux.tar.gz` or `hoshi-reader-terminal_0.1.2_all.deb` |
+| Windows | `Hoshi-Reader-Terminal-0.1.3-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.3-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.3-linux.tar.gz` or `hoshi-reader-terminal_0.1.3_all.deb` |
 
 After installation, run:
 
@@ -78,15 +79,16 @@ hoshi
 ## Package Managers
 
 ```bash
-# macOS / Linuxbrew
-brew install AkihaZhang/Hoshi-Reader-Terminal/hoshi-reader-terminal
+# macOS / Linuxbrew, installs Python automatically if needed
+brew install --formula https://raw.githubusercontent.com/AkihaZhang/Hoshi-Reader-Terminal/main/Formula/hoshi-reader-terminal.rb
 
-# Windows / Scoop
+# Windows / Scoop, installs Python automatically if needed
 scoop bucket add hoshi-reader-terminal https://github.com/AkihaZhang/Hoshi-Reader-Terminal
 scoop install hoshi-reader-terminal
 
-# Debian / Ubuntu, installs python3 dependency if needed
-sudo apt install ./hoshi-reader-terminal_0.1.2_all.deb
+# Debian / Ubuntu, downloads from GitHub Releases and installs python3 if needed
+curl -L https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/download/v0.1.3/hoshi-reader-terminal_0.1.3_all.deb -o /tmp/hoshi-reader-terminal.deb
+sudo apt install /tmp/hoshi-reader-terminal.deb
 ```
 
 ## Commands
@@ -98,6 +100,9 @@ shelf                        Show bookshelf
 read TARGET                  Read by number, id, title fragment, or path
 lookup WORD                  Look up a word
 dict-import PATH             Import a Yomitan dictionary zip or folder
+dict-list [TYPE]             List Term / Frequency / Pitch dictionaries
+dict-order TYPE FROM TO      Reorder dictionaries inside one type
+dict-toggle TYPE INDEX [on|off] Enable or disable a dictionary
 card WORD                    Write CSV or send to AnkiConnect
 stats                        Show reading statistics
 sync [auto|export|import]    Sync reading progress
@@ -140,7 +145,7 @@ python3 scripts/generate_readme_assets.py
 python3 scripts/build_packages.py
 ```
 
-Tagged releases are built by GitHub Actions with PyInstaller on Windows, macOS, and Linux. The Linux job also publishes a `.deb` package.
+Release packages can be generated with `scripts/build_packages.py`. Homebrew, Scoop, and deb installs handle the Python dependency through the package manager.
 
 ## Privacy And Data
 
