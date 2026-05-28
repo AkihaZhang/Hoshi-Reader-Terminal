@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from hoshi_terminal.dictionary import DictionaryManager, deinflect
+from hoshi_terminal.dictionary import DictionaryManager, deinflect, format_results
 
 
 class DictionaryTests(unittest.TestCase):
@@ -27,6 +27,26 @@ class DictionaryTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertEqual(results[0].term, "星")
         self.assertEqual(results[0].definitions, ["star"])
+
+    def test_lookup_scans_prefix_like_reader_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            dictionary = root / "dict"
+            dictionary.mkdir()
+            (dictionary / "index.json").write_text('{"title":"Tiny"}', encoding="utf-8")
+            (dictionary / "term_bank_1.json").write_text(
+                '[["秋","あき","名詞","",0,["autumn"],1,"common"]]',
+                encoding="utf-8",
+            )
+            manager = DictionaryManager(root / "entries.json")
+            manager.import_yomitan(dictionary)
+            results = manager.lookup("秋の空")
+            rendered = format_results(results)
+
+        self.assertEqual(results[0].term, "秋")
+        self.assertIn("前方扫描", results[0].note)
+        self.assertIn("▼ Tiny", rendered)
+        self.assertIn("[common / 名詞]", rendered)
 
     def test_lookup_deinflected_polite_form(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -60,7 +80,8 @@ class DictionaryTests(unittest.TestCase):
             )
             (frequency / "index.json").write_text('{"title":"Tiny Frequency","revision":"1"}', encoding="utf-8")
             (frequency / "term_meta_bank_1.json").write_text(
-                '[["読む","freq",{"reading":"よむ","frequency":{"value":42,"displayValue":"42"}}]]',
+                '[["読む","freq",{"reading":"よむ","frequency":{"value":42,"displayValue":"42"}}],'
+                '["秋","freq",{"frequency":2632,"displayValue":"2632"}]]',
                 encoding="utf-8",
             )
             (pitch / "index.json").write_text('{"title":"Tiny Pitch","revision":"1"}', encoding="utf-8")
@@ -74,9 +95,9 @@ class DictionaryTests(unittest.TestCase):
             counts = manager.counts_by_type()
             results = manager.lookup("読みました")
 
-        self.assertEqual(count, 3)
+        self.assertEqual(count, 4)
         self.assertEqual(counts["term"], 1)
-        self.assertEqual(counts["frequency"], 1)
+        self.assertEqual(counts["frequency"], 2)
         self.assertEqual(counts["pitch"], 1)
         self.assertTrue(results)
         self.assertIn("Tiny Frequency", results[0].frequencies[0])

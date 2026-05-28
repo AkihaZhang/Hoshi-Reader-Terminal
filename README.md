@@ -4,7 +4,7 @@
 
 A terminal Japanese EPUB reader inspired by [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) and [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android), with bookshelf management, Yomitan lookup, Anki card creation, reading statistics, and local progress sync.
 
-The original Hoshi is not cyber-ascetic enough. Hoshi Reader Terminal puts light-novel reading, dictionary lookup, and card creation entirely inside the terminal, solving the problem that Hoshi is too easy to use.
+Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, dictionary lookup, and card creation entirely inside the terminal, thoroughly fixing the design flaw that Hoshi Reader is too easy to use.
 
 <p align="center">
   <img src="docs/images/01-menu.svg" alt="Main menu" width="760">
@@ -30,7 +30,7 @@ The original Hoshi is not cyber-ascetic enough. Hoshi Reader Terminal puts light
 ### Reading
 
 - Read in paginated terminal pages.
-- Switch between horizontal text and a simple terminal vertical-text mode.
+- Switch between horizontal text and a simple terminal vertical layout.
 - Use clear reader commands with examples shown on screen:
   - `/読みました` for lookup
   - `a 読む` for card creation
@@ -63,13 +63,13 @@ The original Hoshi is not cyber-ascetic enough. Hoshi Reader Terminal puts light
 
 ## Download
 
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.4). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.5). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.4-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.4-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.4-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.5-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.5-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.5-linux.tar.gz` |
 
 After installation, run:
 
@@ -154,7 +154,7 @@ Hoshi Reader Terminal stores imported books, dictionaries, card CSV files, readi
 
 ## Attribution
 
-The menu, reader, dictionary, Anki, and sync shapes are inspired by Hoshi Reader iOS / Android. This repository does not copy upstream source code; it is a terminal parody implementation.
+The menu, reader, dictionary, Anki, and sync behavior follow Hoshi Reader iOS / Android where it makes sense for a terminal. Terminal-compatible interaction structure is adapted from upstream behavior, while the cross-platform CLI layer is implemented in Python here.
 
 ## License
 

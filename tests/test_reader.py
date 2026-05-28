@@ -1,6 +1,6 @@
 import unittest
 
-from hoshi_terminal.reader import character_count, paginate, render_vertical, sentence_around
+from hoshi_terminal.reader import Page, character_count, paginate, render_page, render_vertical, sentence_around
 
 
 class ReaderTests(unittest.TestCase):
@@ -14,6 +14,14 @@ class ReaderTests(unittest.TestCase):
     def test_vertical_renderer_has_content(self) -> None:
         rendered = render_vertical("端末で読む", rows=4)
         self.assertIn("端", rendered)
+
+    def test_reader_footer_only_advertises_arrows_for_page_turning(self) -> None:
+        rendered = render_page("demo", Page(0, 0, 1, "本文"), 2)
+        self.assertIn("→/↓ 下一页", rendered)
+        self.assertIn("←/↑ 上一页", rendered)
+        self.assertNotIn("Enter/n", rendered)
+        self.assertNotIn("p 上一页", rendered)
+        self.assertNotIn("v 纵书", rendered)
 
     def test_sentence_around(self) -> None:
         text = "前の文。端末で読むと楽しい。次の文。"

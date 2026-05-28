@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Iterator
 import json
 import re
 import sqlite3
@@ -57,6 +58,8 @@ class LookupResult:
     note: str = ""
     frequencies: list[str] = field(default_factory=list)
     pitches: list[str] = field(default_factory=list)
+    definition_tags: list[str] = field(default_factory=list)
+    term_tags: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -95,15 +98,18 @@ class DictionaryManager:
             return self._import_source(source, _ZipReader(source))
         raise ValueError("词典必须是 Yomitan zip 文件或目录")
 
-    def lookup(self, word: str, limit: int = 8) -> list[LookupResult]:
+    def lookup(self, word: str, limit: int = 16, scan_length: int = 16) -> list[LookupResult]:
         needle = word.strip()
         if not needle:
             return []
 
-        candidates = [(needle, "exact")]
-        for base, note in deinflect(needle):
-            if base != needle:
-                candidates.append((base, note))
+        candidates: list[tuple[str, str]] = []
+        for query, query_note in _lookup_queries(needle, scan_length):
+            candidates.append((query, query_note))
+            for base, note in deinflect(query):
+                if base != query:
+                    combined = note if query_note == "exact" else f"{query_note} / {note}"
+                    candidates.append((base, combined))
 
         results: list[LookupResult] = []
         seen: set[tuple[str, str, str]] = set()
@@ -124,6 +130,8 @@ class DictionaryManager:
                             dictionary=str(row["dictionary"]),
                             matched=candidate,
                             note="" if note == "exact" else note,
+                            definition_tags=_split_tags(str(row["definition_tags"] or "")),
+                            term_tags=_split_tags(str(row["term_tags"] or "")),
                             frequencies=self._lookup_frequency_rows(db, term, reading),
                             pitches=self._lookup_pitch_rows(db, term, reading),
                         )
@@ -283,8 +291,8 @@ class DictionaryManager:
             if dict_type == "term":
                 db.executemany(
                     """
-                    INSERT INTO entries(dictionary_id, term, reading, definitions)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO entries(dictionary_id, term, reading, definitions, definition_tags, term_tags, rules)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         (
@@ -292,6 +300,9 @@ class DictionaryManager:
                             str(row["term"]),
                             str(row.get("reading", "")),
                             json.dumps(row.get("definitions", []), ensure_ascii=False),
+                            str(row.get("definition_tags", "")),
+                            str(row.get("term_tags", "")),
+                            str(row.get("rules", "")),
                         )
                         for row in rows
                     ),
@@ -338,7 +349,7 @@ class DictionaryManager:
     def _lookup_term_rows(self, db: sqlite3.Connection, word: str, limit: int) -> list[sqlite3.Row]:
         return db.execute(
             """
-            SELECT e.term, e.reading, e.definitions, d.title AS dictionary
+            SELECT e.term, e.reading, e.definitions, e.definition_tags, e.term_tags, e.rules, d.title AS dictionary
             FROM entries e
             JOIN dictionaries d ON d.id = e.dictionary_id
             WHERE d.enabled = 1
@@ -405,6 +416,9 @@ class DictionaryManager:
                     term TEXT NOT NULL,
                     reading TEXT NOT NULL DEFAULT '',
                     definitions TEXT NOT NULL,
+                    definition_tags TEXT NOT NULL DEFAULT '',
+                    term_tags TEXT NOT NULL DEFAULT '',
+                    rules TEXT NOT NULL DEFAULT '',
                     FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
                 );
                 CREATE TABLE IF NOT EXISTS frequencies (
@@ -430,6 +444,9 @@ class DictionaryManager:
                 CREATE INDEX IF NOT EXISTS idx_pitches_reading ON pitches(reading);
                 """
             )
+            self._ensure_column(db, "entries", "definition_tags", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "entries", "term_tags", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "entries", "rules", "TEXT NOT NULL DEFAULT ''")
 
     def _migrate_legacy_json(self) -> None:
         if not self.data_file.exists():
@@ -456,16 +473,30 @@ class DictionaryManager:
         if rows:
             self._insert_records("term", "旧版导入词典", "", str(self.data_file), rows)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.db_file)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     @staticmethod
     def _next_priority(db: sqlite3.Connection, dict_type: str) -> int:
         row = db.execute("SELECT COALESCE(MAX(priority), -1) + 1 AS priority FROM dictionaries WHERE type = ?", (dict_type,)).fetchone()
         return int(row["priority"] if row else 0)
+
+    @staticmethod
+    def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _imported_types(self, title: str) -> set[str]:
         with self._connect() as db:
@@ -632,19 +663,37 @@ def format_results(results: list[LookupResult]) -> str:
     if not results:
         return "没有命中。"
     blocks: list[str] = []
-    for index, result in enumerate(results, start=1):
-        heading = f"{index}. {result.term}"
-        if result.reading:
-            heading += f" [{result.reading}]"
-        if result.note:
-            heading += f"  ({result.note})"
-        lines = [heading, f"   @ {result.dictionary}"]
-        if result.frequencies:
-            lines.append(f"   频率: {' | '.join(result.frequencies)}")
-        if result.pitches:
-            lines.append(f"   音高: {' | '.join(result.pitches)}")
-        for definition in result.definitions[:5]:
-            lines.append(f"   - {_shorten(definition)}")
+    for index, group in enumerate(_group_lookup_results(results), start=1):
+        first = group[0]
+        heading = f"{index}. {first.term}"
+        if first.reading and first.reading != first.term:
+            heading += f" [{first.reading}]"
+        if first.note:
+            heading += f"  ({first.note})"
+        lines = [heading]
+
+        frequencies = _unique(item for result in group for item in result.frequencies)
+        pitches = _unique(item for result in group for item in result.pitches)
+        if frequencies:
+            lines.append("   频率 " + " ".join(_aux_badge(item) for item in frequencies[:10]))
+        if pitches:
+            lines.append("   音高 " + " ".join(_aux_badge(item) for item in pitches[:8]))
+        lines.append(f"   操作  a {first.term} 制卡    /{first.term} 递归查词")
+
+        by_dictionary: dict[str, list[LookupResult]] = {}
+        for result in group:
+            by_dictionary.setdefault(result.dictionary, []).append(result)
+        for dictionary, entries in by_dictionary.items():
+            lines.append(f"   ▼ {dictionary}")
+            for entry_index, entry in enumerate(entries, start=1):
+                tags = _unique([*entry.term_tags, *entry.definition_tags])
+                tag_text = f" [{' / '.join(tags)}]" if tags else ""
+                prefix = f"      {entry_index}. " if len(entries) > 1 else "      "
+                if tag_text:
+                    lines.append(prefix + tag_text.strip())
+                for definition_index, definition in enumerate(entry.definitions[:4], start=1):
+                    marker = "・" if len(entry.definitions) == 1 else f"{definition_index}."
+                    lines.append(f"      {marker} {_shorten(definition, 520)}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
@@ -712,6 +761,9 @@ def _parse_term_bank_row(row: object, dictionary_name: str) -> dict[str, object]
         "reading": reading,
         "definitions": definitions,
         "dictionary": dictionary_name,
+        "definition_tags": str(row[2] or "") if len(row) > 2 else "",
+        "rules": str(row[3] or "") if len(row) > 3 else "",
+        "term_tags": str(row[7] or "") if len(row) > 7 else "",
     }
 
 
@@ -722,7 +774,7 @@ def _parse_pitch_bank_row(row: object, dictionary_name: str) -> dict[str, object
     return {
         "term": parsed["term"],
         "reading": parsed.get("reading", ""),
-        "summary": "；".join(str(item) for item in parsed.get("definitions", [])[:3]),
+        "summary": _summarize_pitch_definitions([str(item) for item in parsed.get("definitions", [])]),
     }
 
 
@@ -751,8 +803,8 @@ def _parse_frequency_data(data: object) -> tuple[str, str, str]:
             value = str(frequency.get("value") or data.get("value") or "")
             display = str(frequency.get("displayValue") or data.get("displayValue") or value)
         else:
-            value = str(data.get("value") or "")
-            display = str(data.get("displayValue") or value)
+            value = str(data.get("value") or frequency or "")
+            display = str(data.get("displayValue") or frequency or value)
         return reading, value, display
     return "", str(data), str(data)
 
@@ -770,6 +822,14 @@ def _parse_pitch_data(data: object) -> tuple[str, str]:
                 return reading, ",".join(positions)
         return reading, _shorten(json.dumps(data, ensure_ascii=False), 160)
     return "", _shorten(str(data), 160)
+
+
+def _summarize_pitch_definitions(definitions: list[str]) -> str:
+    text = "\n".join(definitions)
+    matches = re.findall(r"［(\d+)］\s*([^\n；;]+)", text)
+    if matches:
+        return " / ".join(f"{position} {pronunciation.strip()}" for position, pronunciation in matches[:6])
+    return _shorten(text, 160)
 
 
 def _flatten_glossary(value: object) -> list[str]:
@@ -820,6 +880,60 @@ def _format_aux_row(row: sqlite3.Row) -> str:
     reading = str(row["reading"] or "").strip()
     suffix = f" [{reading}]" if reading else ""
     return f"{dictionary}{suffix}: {display}" if display else f"{dictionary}{suffix}"
+
+
+def _lookup_queries(text: str, scan_length: int) -> list[tuple[str, str]]:
+    compact = re.sub(r"\s+", "", text.strip())
+    if not compact:
+        return []
+    queries = [(compact, "exact")]
+    max_length = min(len(compact), max(1, scan_length))
+    for length in range(max_length, 0, -1):
+        prefix = compact[:length]
+        if prefix != compact:
+            queries.append((prefix, f"从「{compact}」前方扫描"))
+    deduped: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for query, note in queries:
+        if query not in seen:
+            seen.add(query)
+            deduped.append((query, note))
+    return deduped
+
+
+def _group_lookup_results(results: list[LookupResult]) -> list[list[LookupResult]]:
+    groups: list[list[LookupResult]] = []
+    group_by_key: dict[tuple[str, str, str], list[LookupResult]] = {}
+    for result in results:
+        key = (result.term, result.reading, result.note)
+        group = group_by_key.get(key)
+        if group is None:
+            group = []
+            group_by_key[key] = group
+            groups.append(group)
+        group.append(result)
+    return groups
+
+
+def _split_tags(tags: str) -> list[str]:
+    return [tag for tag in re.split(r"[\s,;|/]+", tags.strip()) if tag and not tag.isdigit()]
+
+
+def _unique(items: Iterable[str]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            values.append(item)
+    return values
+
+
+def _aux_badge(text: str) -> str:
+    if ": " in text:
+        dictionary, value = text.split(": ", 1)
+        return f"[{_shorten(dictionary, 24)} {value}]"
+    return f"[{_shorten(text, 32)}]"
 
 
 def _shorten(text: str, limit: int = 360) -> str:

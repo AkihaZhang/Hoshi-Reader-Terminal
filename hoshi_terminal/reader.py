@@ -58,8 +58,8 @@ def render_page(title: str, page: Page, total_pages: int, vertical: bool = False
     content = render_vertical(page.text) if vertical else page.text
     footer = "\n".join(
         [
-            style("Enter/n 下一页    p 上一页    v 纵书    s 统计    q 退出", DIM),
-            style("查词：/読みました    制卡：a 読む    划线备注：h 备注内容", DIM),
+            style("→/↓ 下一页    ←/↑ 上一页    r 排版切换    s 统计    q 退出", DIM),
+            style("输入 /読みました 查词    输入 a 読む 制卡    输入 h 备注内容 划线", DIM),
         ]
     )
     return "\n".join([header, ruler, content, ruler, footer])
@@ -79,7 +79,7 @@ def render_vertical(text: str, rows: int | None = None) -> str:
         for chunk in reversed(chunks):
             cells.append(chunk[row] if row < len(chunk) else " ")
         output.append(" ".join(cells).rstrip())
-    warning = style("[终端纵书]", GREEN)
+    warning = style("[竖排显示]", GREEN)
     return warning + "\n" + "\n".join(output).rstrip()
 
 

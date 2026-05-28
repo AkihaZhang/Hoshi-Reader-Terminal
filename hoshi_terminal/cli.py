@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -126,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     demo = subparsers.add_parser("demo", aliases=["演示"], help="打开内置演示书")
     demo.add_argument("--print", action="store_true", dest="print_only", help="打印第一页后退出")
-    demo.add_argument("--vertical", action="store_true", help="用终端纵书模式显示")
+    demo.add_argument("--vertical", action="store_true", help="用终端竖排显示")
     demo.set_defaults(func=cmd_demo)
 
     import_cmd = subparsers.add_parser("import", aliases=["导入"], help="导入书籍到书架")
@@ -140,7 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
     read = subparsers.add_parser("read", aliases=["阅读"], help="阅读书籍 id、标题片段或文件路径")
     read.add_argument("target", nargs="?", metavar="目标")
     read.add_argument("--print", action="store_true", dest="print_only", help="打印当前页后退出")
-    read.add_argument("--vertical", action="store_true", help="启动时使用终端纵书模式")
+    read.add_argument("--vertical", action="store_true", help="启动时使用终端竖排显示")
     read.add_argument("--width", type=int, help="非交互输出的页面宽度")
     read.add_argument("--lines", type=int, help="非交互输出的页面行数")
     read.set_defaults(func=cmd_read)
@@ -369,14 +370,14 @@ def interactive_loop(
         page = pages[page_index]
         print(clear_screen(), end="")
         print(render_page(title, page, len(pages), vertical=vertical))
-        command = _read_input(style("hoshi> ", CYAN)).strip()
-        if command in {"", "n", "next"}:
+        command = _read_reader_command(style("hoshi> ", CYAN)).strip()
+        if command in {"right", "down"}:
             page_index = min(len(pages) - 1, page_index + 1)
-        elif command in {"p", "prev", "previous"}:
+        elif command in {"left", "up"}:
             page_index = max(0, page_index - 1)
         elif command in {"q", "quit", "exit"}:
             break
-        elif command == "v":
+        elif command in {"r", "v"}:
             vertical = not vertical
         elif command.startswith("/"):
             word = command[1:].strip()
@@ -1223,6 +1224,82 @@ def _read_input(prompt: str = "") -> str:
         return input(prompt)
     except EOFError as exc:
         raise GracefulExit from exc
+
+
+def _read_reader_command(prompt: str = "") -> str:
+    if not sys.stdin.isatty():
+        return _read_input(prompt)
+    print(prompt, end="", flush=True)
+    key = _read_single_key()
+    command = _normalize_reader_key(key)
+    if command in {"right", "down", "left", "up", "space", ""}:
+        print()
+        return command
+    if command in {"r", "v", "s", "q"}:
+        print(command)
+        return command
+    if command == "/":
+        return "/" + _read_input("/")
+    if command == "a":
+        return "a " + _read_input("a ")
+    if command == "h":
+        return "h " + _read_input("h ")
+    if command == "g":
+        return "g " + _read_input("g ")
+    print(command)
+    return command
+
+
+def _normalize_reader_key(key: str) -> str:
+    arrows = {
+        "\x1b[C": "right",
+        "\x1b[B": "down",
+        "\x1b[D": "left",
+        "\x1b[A": "up",
+        "\xe0M": "right",
+        "\xe0P": "down",
+        "\xe0K": "left",
+        "\xe0H": "up",
+        "\x00M": "right",
+        "\x00P": "down",
+        "\x00K": "left",
+        "\x00H": "up",
+    }
+    if key in arrows:
+        return arrows[key]
+    if key in {"\r", "\n"}:
+        return ""
+    if key == " ":
+        return "space"
+    return key
+
+
+def _read_single_key() -> str:
+    if os.name == "nt":
+        import msvcrt
+
+        first = msvcrt.getwch()
+        if first in {"\x00", "\xe0"}:
+            return first + msvcrt.getwch()
+        return first
+
+    import select
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        data = os.read(fd, 1)
+        if data == b"\x1b":
+            for _ in range(5):
+                if not select.select([fd], [], [], 0.1)[0]:
+                    break
+                data += os.read(fd, 1)
+        return data.decode(errors="ignore")
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 def _parse_page_number(raw: str, total_pages: int) -> int | None:

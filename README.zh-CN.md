@@ -4,7 +4,7 @@
 
 一个受 [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) 和 [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android) 启发的终端日语 EPUB 阅读器，支持书库、Yomitan 查词、Anki 制卡、阅读统计和本地进度同步。
 
-原版不够赛博苦行僧。Hoshi Reader Terminal 把轻小说阅读、查词、制卡功能全部塞进终端，解决了 Hoshi 过于好用的问题。
+Hoshi Reader Terminal 面向真正的赛博苦行僧：它把小说阅读、查词和制卡全部塞进终端，彻底修复了 Hoshi Reader 过于好用的设计缺陷。
 
 <p align="center">
   <img src="docs/images/01-menu.svg" alt="主菜单" width="760">
@@ -30,7 +30,7 @@
 ### 阅读
 
 - 在终端里分页阅读。
-- 支持横排和简易终端纵书模式。
+- 支持横排和简易终端竖排显示。
 - 阅读器底部直接显示可照抄的输入例子：
   - `/読みました` 查词
   - `a 読む` 制卡
@@ -63,13 +63,13 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.4) 下载便携包。推荐用下面的一键脚本安装；zip/tar 便携包本身需要 Python 3.10+。
+从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.5) 下载便携包。推荐用下面的一键脚本安装；zip/tar 便携包本身需要 Python 3.10+。
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.4-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.4-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.4-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.5-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.5-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.5-linux.tar.gz` |
 
 安装后运行：
 
@@ -154,7 +154,7 @@ Hoshi Reader Terminal 会把导入的书、词典、制卡 CSV、阅读进度、
 
 ## 致谢
 
-菜单、阅读、辞典、Anki 和同步的轮廓参考自 Hoshi Reader iOS / Android。这个仓库没有复制上游源码，是一个终端恶搞版实现。
+菜单、阅读、辞典、Anki 和同步的轮廓参考 Hoshi Reader iOS / Android；能在终端环境里复用的实现思路和交互结构会尽量移植，跨平台终端入口由本仓库 Python 实现。
 
 ## License
 
