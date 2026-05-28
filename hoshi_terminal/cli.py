@@ -555,6 +555,7 @@ def _sasayaki_play(
     delay: float | None = None,
     line_only: bool = False,
     player_session: SasayakiPlayer | None = None,
+    quiet: bool = False,
 ) -> int:
     data = library.sasayaki_for(record)
     match = _sasayaki_match_data(data)
@@ -583,11 +584,12 @@ def _sasayaki_play(
     playback["lastPosition"] = cue.start_time
     data["playback"] = playback
     library.set_sasayaki(record, data)
-    label = "Sasayaki 播放本句" if line_only else "Sasayaki 从此句播放"
-    print(style(label, GREEN), f"{format_time(cue.start_time)}  {cue.text}")
-    if player in {"open", "start", "xdg-open"}:
-        print(style("提示", YELLOW), "系统默认播放器可能不会跳到指定时间；安装 mpv 或 ffplay 可按台词起点播放。")
-    print(style("播放器", DIM), player, " ".join(command))
+    if not quiet:
+        label = "Sasayaki 播放本句" if line_only else "Sasayaki 从此句播放"
+        print(style(label, GREEN), f"{format_time(cue.start_time)}  {cue.text}")
+        if player in {"open", "start", "xdg-open"}:
+            print(style("提示", YELLOW), "系统默认播放器可能不会跳到指定时间；安装 mpv 或 ffplay 可按台词起点播放。")
+        print(style("播放器", DIM), player, " ".join(command))
     return 0
 
 
@@ -731,6 +733,70 @@ def _reader_sasayaki_panel(
             print("没有这个 Sasayaki 选项。")
 
 
+def _reader_sasayaki_current(
+    library: Library,
+    record: BookRecord | None,
+    page: Page,
+    prefer_playback: bool = False,
+) -> tuple[dict[str, object], SasayakiMatchData, SasayakiMatch, int] | None:
+    if record is None:
+        return None
+    data = library.sasayaki_for(record)
+    match = _sasayaki_match_data(data)
+    if not data or not match or not match.matches:
+        return None
+    playback = _sasayaki_playback(data)
+    page_cue = find_cue_for_page(match, page.text)
+    last_position = float(playback.get("lastPosition", 0.0))
+    position_cue = cue_at_time(match, last_position) if last_position > 0 else None
+    if prefer_playback and position_cue is not None:
+        cue = position_cue
+    else:
+        cue = page_cue or position_cue or match.matches[0]
+    return data, match, cue, match.matches.index(cue) + 1
+
+
+def _reader_sasayaki_play(
+    library: Library,
+    record: BookRecord | None,
+    page: Page,
+    player: SasayakiPlayer,
+    direction: str = "current",
+) -> None:
+    current = _reader_sasayaki_current(library, record, page, prefer_playback=direction != "current")
+    if current is None:
+        _flash_message("这本书还没有 Sasayaki 匹配。")
+        return
+    _, match, cue, _ = current
+    if direction == "next":
+        cue = next_cue(match, cue.start_time) or cue
+    elif direction == "previous":
+        cue = previous_cue(match, cue.start_time) or cue
+    cue_index = match.matches.index(cue) + 1
+    try:
+        _sasayaki_play(library, record, cue_index=cue_index, player_session=player, quiet=True)
+    except Exception as exc:
+        _flash_message(f"Sasayaki 播放失败：{exc}", seconds=0.9)
+
+
+def _reader_sasayaki_toggle(
+    library: Library,
+    record: BookRecord | None,
+    page: Page,
+    player: SasayakiPlayer,
+) -> None:
+    if player.is_playing():
+        player.toggle_pause()
+        _flash_message("Sasayaki 已暂停" if player.paused else "Sasayaki 继续播放")
+        return
+    _reader_sasayaki_play(library, record, page, player)
+
+
+def _flash_message(message: str, seconds: float = 0.45) -> None:
+    print(style(message, YELLOW))
+    time.sleep(seconds)
+
+
 def interactive_loop(
     title: str,
     text: str,
@@ -751,10 +817,16 @@ def interactive_loop(
             print(clear_screen(), end="")
             print(render_page(title, page, len(pages), vertical=vertical))
             command = _read_reader_command(style("hoshi> ", CYAN)).strip()
-            if command in {"right", "down"}:
+            if command == "right":
                 page_index = min(len(pages) - 1, page_index + 1)
-            elif command in {"left", "up"}:
+            elif command == "left":
                 page_index = max(0, page_index - 1)
+            elif command == "down":
+                _reader_sasayaki_play(library, record, page, sasayaki_player, direction="next")
+            elif command == "up":
+                _reader_sasayaki_play(library, record, page, sasayaki_player, direction="previous")
+            elif command in {"", "space"}:
+                _reader_sasayaki_toggle(library, record, page, sasayaki_player)
             elif command in {"q", "quit", "exit"}:
                 break
             elif command in {"r", "v"}:

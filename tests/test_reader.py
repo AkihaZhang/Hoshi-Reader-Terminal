@@ -30,10 +30,13 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(terminal_cell_width("｡"), 1)
         self.assertEqual(vertical_cell("。"), "｡ ")
 
-    def test_reader_footer_only_advertises_arrows_for_page_turning(self) -> None:
+    def test_reader_footer_splits_page_and_sasayaki_arrows(self) -> None:
         rendered = render_page("demo", Page(0, 0, 1, "本文"), 2)
-        self.assertIn("→/↓ 下一页", rendered)
-        self.assertIn("←/↑ 上一页", rendered)
+        self.assertIn("←/→ 翻页", rendered)
+        self.assertIn("↑/↓ Sasayaki", rendered)
+        self.assertIn("Enter/Space 播放/暂停", rendered)
+        self.assertNotIn("→/↓ 下一页", rendered)
+        self.assertNotIn("←/↑ 上一页", rendered)
         self.assertNotIn("Enter/n", rendered)
         self.assertNotIn("p 上一页", rendered)
         self.assertNotIn("v 纵书", rendered)

@@ -3,11 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
+import json
 import os
 import platform
 import re
 import shutil
+import socket
 import subprocess
+import tempfile
 import time
 
 from .epub import Chapter, ExtractedBook
@@ -258,6 +261,9 @@ def format_time(seconds: float) -> str:
 class SasayakiPlayer:
     def __init__(self) -> None:
         self.process: subprocess.Popen[bytes] | None = None
+        self.player_name = ""
+        self.ipc_path: Path | None = None
+        self.paused = False
 
     def play(
         self,
@@ -268,13 +274,38 @@ class SasayakiPlayer:
     ) -> tuple[list[str], str]:
         self.stop()
         command, player = audio_command(audio_path, start_time=start_time, rate=rate, duration=duration)
+        self.player_name = player
+        if player == "mpv" and os.name != "nt":
+            self.ipc_path = Path(tempfile.gettempdir()) / f"hoshi-reader-terminal-mpv-{os.getpid()}-{id(self)}.sock"
+            command.insert(-1, f"--input-ipc-server={self.ipc_path}")
         self.process = _open_audio_process(command, player)
+        self.paused = False
         return command, player
+
+    def is_playing(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    def toggle_pause(self) -> bool:
+        if not self.is_playing():
+            return False
+        if self.player_name == "mpv" and self.ipc_path is not None:
+            try:
+                _send_mpv_command(self.ipc_path, ["cycle", "pause"])
+            except OSError:
+                pass
+            else:
+                self.paused = not self.paused
+                return True
+        self.stop()
+        self.paused = True
+        return True
 
     def stop(self, timeout: float = 0.3) -> None:
         process = self.process
         self.process = None
+        self.paused = False
         if process is None or process.poll() is not None:
+            self._cleanup_ipc()
             return
         process.terminate()
         deadline = time.monotonic() + timeout
@@ -282,6 +313,16 @@ class SasayakiPlayer:
             time.sleep(0.03)
         if process.poll() is None:
             process.kill()
+        self._cleanup_ipc()
+
+    def _cleanup_ipc(self) -> None:
+        if self.ipc_path is None:
+            return
+        try:
+            self.ipc_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self.ipc_path = None
 
 
 def audio_command(
@@ -349,3 +390,20 @@ def _open_audio_process(command: list[str], player: str) -> subprocess.Popen[byt
         subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
         return None
     return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _send_mpv_command(ipc_path: Path, command: list[object]) -> None:
+    payload = json.dumps({"command": command}).encode("utf-8") + b"\n"
+    deadline = time.monotonic() + 0.5
+    last_error: OSError | None = None
+    while time.monotonic() < deadline:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(str(ipc_path))
+                client.sendall(payload)
+                return
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.03)
+    if last_error is not None:
+        raise last_error

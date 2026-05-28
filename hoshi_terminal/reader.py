@@ -83,7 +83,7 @@ def render_page(title: str, page: Page, total_pages: int, vertical: bool = False
     content = render_vertical(page.text) if vertical else page.text
     footer = "\n".join(
         [
-            style("→/↓ 下一页    ←/↑ 上一页    r 排版切换    y Sasayaki    s 统计    q 退出", DIM),
+            style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放/暂停    r 排版    y 详情    q 退出", DIM),
             style("输入 /読みました 查词    输入 a 読む 制卡    输入 h 备注内容 划线", DIM),
         ]
     )
