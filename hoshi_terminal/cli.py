@@ -668,7 +668,12 @@ def _lookup_pager(word: str, results: object, library: Library) -> None:
                 _read_input(style("按 Enter 继续", DIM))
 
 
-def _reader_sasayaki_panel(library: Library, record: BookRecord | None, page: Page) -> None:
+def _reader_sasayaki_panel(
+    library: Library,
+    record: BookRecord | None,
+    page: Page,
+    player: SasayakiPlayer,
+) -> None:
     if record is None:
         print("直接阅读文件时没有书架记录，无法使用 Sasayaki。")
         _read_input(style("按 Enter 继续", DIM))
@@ -690,44 +695,40 @@ def _reader_sasayaki_panel(library: Library, record: BookRecord | None, page: Pa
         _read_input(style("按 Enter 继续", DIM))
         return
 
-    player = SasayakiPlayer()
-    try:
-        while True:
-            print(style("Sasayaki", BOLD), f"{match_rate_text(match)}")
-            cue_index = match.matches.index(cue) + 1
-            _print_sasayaki_cue(cue, cue_index)
-            print("1. 播放这一句")
-            print("2. 从这一句继续")
-            print("3. 停止播放")
-            print("4. 上一句")
-            print("5. 下一句")
-            print("0. 返回阅读")
-            choice = _read_input(style("请选择：", CYAN)).strip()
-            if choice == "1":
-                try:
-                    _sasayaki_play(library, record, cue_index=cue_index, line_only=True, player_session=player)
-                except Exception as exc:
-                    print(style(f"播放失败：{exc}", YELLOW))
-                _read_input(style("按 Enter 继续", DIM))
-            elif choice == "2":
-                try:
-                    _sasayaki_play(library, record, cue_index=cue_index, player_session=player)
-                except Exception as exc:
-                    print(style(f"播放失败：{exc}", YELLOW))
-                _read_input(style("按 Enter 继续", DIM))
-            elif choice == "3":
-                player.stop()
-                print(style("已停止", GREEN))
-            elif choice == "4":
-                cue = previous_cue(match, cue.start_time) or cue
-            elif choice == "5":
-                cue = next_cue(match, cue.start_time) or cue
-            elif choice in {"0", "q", "Q", "返回"}:
-                return
-            else:
-                print("没有这个 Sasayaki 选项。")
-    finally:
-        player.stop()
+    while True:
+        print(style("Sasayaki", BOLD), f"{match_rate_text(match)}")
+        cue_index = match.matches.index(cue) + 1
+        _print_sasayaki_cue(cue, cue_index)
+        print("1. 播放这一句")
+        print("2. 从这一句继续")
+        print("3. 停止播放")
+        print("4. 上一句")
+        print("5. 下一句")
+        print("0. 返回阅读")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            try:
+                _sasayaki_play(library, record, cue_index=cue_index, line_only=True, player_session=player)
+            except Exception as exc:
+                print(style(f"播放失败：{exc}", YELLOW))
+            _read_input(style("按 Enter 继续", DIM))
+        elif choice == "2":
+            try:
+                _sasayaki_play(library, record, cue_index=cue_index, player_session=player)
+            except Exception as exc:
+                print(style(f"播放失败：{exc}", YELLOW))
+            _read_input(style("按 Enter 继续", DIM))
+        elif choice == "3":
+            player.stop()
+            print(style("已停止", GREEN))
+        elif choice == "4":
+            cue = previous_cue(match, cue.start_time) or cue
+        elif choice == "5":
+            cue = next_cue(match, cue.start_time) or cue
+        elif choice in {"0", "q", "Q", "返回"}:
+            return
+        else:
+            print("没有这个 Sasayaki 选项。")
 
 
 def interactive_loop(
@@ -742,52 +743,56 @@ def interactive_loop(
     page_index = start_page
     session_started = time.monotonic()
     session_start_char = pages[start_page].start_char if pages else 0
+    sasayaki_player = SasayakiPlayer()
 
-    while True:
-        page = pages[page_index]
-        print(clear_screen(), end="")
-        print(render_page(title, page, len(pages), vertical=vertical))
-        command = _read_reader_command(style("hoshi> ", CYAN)).strip()
-        if command in {"right", "down"}:
-            page_index = min(len(pages) - 1, page_index + 1)
-        elif command in {"left", "up"}:
-            page_index = max(0, page_index - 1)
-        elif command in {"q", "quit", "exit"}:
-            break
-        elif command in {"r", "v"}:
-            vertical = not vertical
-        elif command == "y":
-            _reader_sasayaki_panel(library, record, page)
-        elif command.startswith("/"):
-            word = command[1:].strip()
-            if word:
-                _show_lookup(word, library)
-        elif command.startswith("a "):
-            word = command[2:].strip()
-            sentence = sentence_around(page.text, word)
-            card_path = library.mine_card(word, sentence=sentence)
-            print(style("已制卡", MAGENTA), f"{word} -> {card_path}")
-            _read_input(style("按 Enter 继续", DIM))
-        elif command.startswith("h"):
-            note = command[1:].strip()
-            if record is None:
-                print("直接阅读文件时没有书架记录，无法保存划线。")
+    try:
+        while True:
+            page = pages[page_index]
+            print(clear_screen(), end="")
+            print(render_page(title, page, len(pages), vertical=vertical))
+            command = _read_reader_command(style("hoshi> ", CYAN)).strip()
+            if command in {"right", "down"}:
+                page_index = min(len(pages) - 1, page_index + 1)
+            elif command in {"left", "up"}:
+                page_index = max(0, page_index - 1)
+            elif command in {"q", "quit", "exit"}:
+                break
+            elif command in {"r", "v"}:
+                vertical = not vertical
+            elif command == "y":
+                _reader_sasayaki_panel(library, record, page, sasayaki_player)
+            elif command.startswith("/"):
+                word = command[1:].strip()
+                if word:
+                    _show_lookup(word, library)
+            elif command.startswith("a "):
+                word = command[2:].strip()
+                sentence = sentence_around(page.text, word)
+                card_path = library.mine_card(word, sentence=sentence)
+                print(style("已制卡", MAGENTA), f"{word} -> {card_path}")
+                _read_input(style("按 Enter 继续", DIM))
+            elif command.startswith("h"):
+                note = command[1:].strip()
+                if record is None:
+                    print("直接阅读文件时没有书架记录，无法保存划线。")
+                else:
+                    library.add_highlight(record, page.text, note)
+                    print(style("已划线当前页", GREEN))
+                _read_input(style("按 Enter 继续", DIM))
+            elif command == "s":
+                chars = max(0, page.end_char - session_start_char)
+                seconds = max(0.1, time.monotonic() - session_started)
+                print(f"本次阅读：{chars} 字符，{seconds / 60:.1f} 分钟，{int(chars / (seconds / 60))} 字符/分钟")
+                _read_input(style("按 Enter 继续", DIM))
+            elif command.startswith("g "):
+                page_number = _parse_page_number(command[2:], len(pages))
+                if page_number is not None:
+                    page_index = page_number
             else:
-                library.add_highlight(record, page.text, note)
-                print(style("已划线当前页", GREEN))
-            _read_input(style("按 Enter 继续", DIM))
-        elif command == "s":
-            chars = max(0, page.end_char - session_start_char)
-            seconds = max(0.1, time.monotonic() - session_started)
-            print(f"本次阅读：{chars} 字符，{seconds / 60:.1f} 分钟，{int(chars / (seconds / 60))} 字符/分钟")
-            _read_input(style("按 Enter 继续", DIM))
-        elif command.startswith("g "):
-            page_number = _parse_page_number(command[2:], len(pages))
-            if page_number is not None:
-                page_index = page_number
-        else:
-            print("未知命令。")
-            _read_input(style("按 Enter 继续", DIM))
+                print("未知命令。")
+                _read_input(style("按 Enter 继续", DIM))
+    finally:
+        sasayaki_player.stop()
 
     if record is not None:
         end_char = pages[page_index].start_char
