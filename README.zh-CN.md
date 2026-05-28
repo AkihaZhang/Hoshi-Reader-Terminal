@@ -1,10 +1,10 @@
-# Hoshi Reader Terminal ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![包管理器](https://img.shields.io/badge/install-brew%20%7C%20scoop%20%7C%20deb-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
+# Hoshi Reader Terminal ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![安装](https://img.shields.io/badge/install-one--click%20script-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 [English](README.md) | **简体中文**
 
 一个受 [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) 和 [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android) 启发的终端日语 EPUB 阅读器，支持书库、Yomitan 查词、Anki 制卡、阅读统计和本地进度同步。
 
-普通 Hoshi 太像娱乐软件，不够赛博苦行僧。Hoshi Reader Terminal 把轻小说阅读、查词、制卡和进度同步塞进终端，让你假装自己是 Unix 老登，也顺手解决 Hoshi 过于好用的问题。
+原版不够赛博苦行僧。Hoshi Reader Terminal 把轻小说阅读、查词、制卡功能全部塞进终端，解决了 Hoshi 过于好用的问题。
 
 <p align="center">
   <img src="docs/images/01-menu.svg" alt="主菜单" width="760">
@@ -59,16 +59,17 @@
 - 输入 `hoshi` 启动主菜单。
 - 界面标签支持简体中文、English、日本語。
 - 使用参考 Hoshi 图标的 neofetch 风格终端 logo。
+- 支持在线检查 GitHub Release 更新。
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.3) 下载便携包。zip/tar 便携包需要 Python 3.10+；通过包管理器安装时，Python 依赖会由包管理器处理。
+从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.4) 下载便携包。推荐用下面的一键脚本安装；zip/tar 便携包本身需要 Python 3.10+。
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.3-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.3-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.3-linux.tar.gz` 或 `hoshi-reader-terminal_0.1.3_all.deb` |
+| Windows | `Hoshi-Reader-Terminal-0.1.4-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.4-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.4-linux.tar.gz` |
 
 安装后运行：
 
@@ -76,20 +77,19 @@
 hoshi
 ```
 
-## 包管理器
+## 一键安装
 
 ```bash
-# macOS / Linuxbrew，会按需安装 Python
-brew install --formula https://raw.githubusercontent.com/AkihaZhang/Hoshi-Reader-Terminal/main/Formula/hoshi-reader-terminal.rb
-
-# Windows / Scoop，会按需安装 Python
-scoop bucket add hoshi-reader-terminal https://github.com/AkihaZhang/Hoshi-Reader-Terminal
-scoop install hoshi-reader-terminal
-
-# Debian / Ubuntu，从 GitHub Release 下载，并按需安装 python3 依赖
-curl -L https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/download/v0.1.3/hoshi-reader-terminal_0.1.3_all.deb -o /tmp/hoshi-reader-terminal.deb
-sudo apt install /tmp/hoshi-reader-terminal.deb
+# macOS / Linux
+curl -fsSL https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download/install.sh | sh
 ```
+
+```powershell
+# Windows PowerShell
+irm https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download/install.ps1 | iex
+```
+
+脚本会下载最新 release 的对应系统包并安装 `hoshi` 命令。运行需要 Python 3.10+；如果缺少 Python，脚本会给出提示。
 
 ## 命令
 
@@ -108,9 +108,10 @@ sudo apt install /tmp/hoshi-reader-terminal.deb
 同步 [auto|export|import]    同步阅读进度
 设置                         打开设置
 诊断                         检查运行环境
+检查更新                     在线检查新版本
 ```
 
-英文命令 `menu`, `import`, `shelf`, `read`, `lookup`, `dict-import`, `card`, `stats`, `sync`, `settings`, `doctor` 也可用。
+英文命令 `menu`, `import`, `shelf`, `read`, `lookup`, `dict-import`, `card`, `stats`, `sync`, `settings`, `doctor`, `update` 也可用。
 
 ## 从源码运行
 
@@ -145,7 +146,7 @@ python3 scripts/generate_readme_assets.py
 python3 scripts/build_packages.py
 ```
 
-发布包可以用 `scripts/build_packages.py` 生成。Homebrew、Scoop 和 deb 安装会通过包管理器处理 Python 依赖。
+发布包可以用 `scripts/build_packages.py` 生成。Release 上传三系统便携包和一键安装脚本。
 
 ## 隐私和数据
 

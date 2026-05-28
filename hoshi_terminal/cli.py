@@ -15,6 +15,7 @@ from .reader import Page, character_count, page_for_position, paginate, render_p
 from .storage import BookRecord, Library, summarize_text_progress
 from .sync import sync_library
 from .terminal import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, YELLOW, banner, clear_screen, style, terminal_size
+from .updates import check_for_updates, format_update_info
 
 
 BOOK_SUFFIXES = {".epub", ".txt", ".md", ".markdown", ".html", ".htm", ".xhtml"}
@@ -55,6 +56,7 @@ UI_TEXT = {
     "statistics": {"zh": "统计", "en": "Statistics", "ja": "統計"},
     "sync": {"zh": "同步", "en": "Sync", "ja": "同期"},
     "backup": {"zh": "备份", "en": "Backup", "ja": "バックアップ"},
+    "check_update": {"zh": "检查更新", "en": "Check Updates", "ja": "アップデート確認"},
     "writing_direction": {"zh": "文字方向", "en": "Writing Direction", "ja": "文字方向"},
     "language": {"zh": "界面语言", "en": "Interface Language", "ja": "表示言語"},
     "current": {"zh": "当前", "en": "Current", "ja": "現在"},
@@ -96,9 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
         if not argv:
-            if sys.stdin.isatty():
-                return menu_loop()
-            argv = ["--help"]
+            return menu_loop()
         parser = build_parser()
         args = parser.parse_args(argv)
         return int(args.func(args) or 0)
@@ -188,6 +188,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", aliases=["诊断"], help="检查运行环境")
     doctor.set_defaults(func=cmd_doctor)
+
+    update = subparsers.add_parser("update", aliases=["检查更新"], help="在线检查新版本")
+    update.set_defaults(func=cmd_update)
 
     return parser
 
@@ -337,6 +340,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"词典文件: {library.dictionary_file}")
     print(style("诊断结果", YELLOW), "正常")
     return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    print(check_update_message())
+    return 0
+
+
+def check_update_message() -> str:
+    info = check_for_updates(__version__)
+    return format_update_info(info)
 
 
 def interactive_loop(
@@ -1023,6 +1036,7 @@ def advanced_menu() -> int:
         print(f"2. {_ui('sync', library)}")
         print("3. AnkiConnect")
         print(f"4. {_ui('backup', library)}")
+        print(f"5. {_ui('check_update', library)}")
         print(f"0. {_ui('back', library)}")
         choice = _read_input(style(_ui("choose", library), CYAN)).strip()
         if choice == "1":
@@ -1033,6 +1047,8 @@ def advanced_menu() -> int:
             _settings_ankiconnect()
         elif choice == "4":
             _advanced_backup()
+        elif choice == "5":
+            _advanced_check_update()
         elif choice in {"0", "q", "Q", "返回", "back"}:
             return 0
         else:
@@ -1074,6 +1090,14 @@ def _advanced_backup() -> None:
         print(style(f"备份失败：{exc}", RED))
     else:
         print(style("备份完成", GREEN), archive)
+    _pause()
+
+
+def _advanced_check_update() -> None:
+    try:
+        print(check_update_message())
+    except RuntimeError as exc:
+        print(style(str(exc), YELLOW))
     _pause()
 
 

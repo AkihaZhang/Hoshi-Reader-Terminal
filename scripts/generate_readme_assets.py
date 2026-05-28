@@ -59,6 +59,7 @@ def main() -> int:
                 print("2. 同步")
                 print("3. AnkiConnect")
                 print("4. 备份")
+                print("5. 检查更新")
                 print("0. 返回")
                 """,
                 color=True,

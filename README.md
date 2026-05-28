@@ -1,10 +1,10 @@
-# Hoshi Reader Terminal ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![Package Managers](https://img.shields.io/badge/install-brew%20%7C%20scoop%20%7C%20deb-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
+# Hoshi Reader Terminal ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![Install](https://img.shields.io/badge/install-one--click%20script-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 **English** | [简体中文](README.zh-CN.md)
 
 A terminal Japanese EPUB reader inspired by [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) and [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android), with bookshelf management, Yomitan lookup, Anki card creation, reading statistics, and local progress sync.
 
-Regular Hoshi is a little too comfortable, so this version moves light-novel reading, dictionary lookup, card creation, and sync into the terminal for a more cyber-ascetic workflow.
+The original Hoshi is not cyber-ascetic enough. Hoshi Reader Terminal puts light-novel reading, dictionary lookup, and card creation entirely inside the terminal, solving the problem that Hoshi is too easy to use.
 
 <p align="center">
   <img src="docs/images/01-menu.svg" alt="Main menu" width="760">
@@ -59,16 +59,17 @@ Regular Hoshi is a little too comfortable, so this version moves light-novel rea
 - Launch the terminal menu with `hoshi`.
 - Switch interface labels between Simplified Chinese, English, and Japanese.
 - Uses a neofetch-style terminal logo based on the Hoshi icon.
+- Check GitHub Releases for updates from the terminal.
 
 ## Download
 
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.3). Portable zip/tar packages require Python 3.10+. Package manager installs handle the Python dependency for you.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.4). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.3-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.3-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.3-linux.tar.gz` or `hoshi-reader-terminal_0.1.3_all.deb` |
+| Windows | `Hoshi-Reader-Terminal-0.1.4-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.4-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.4-linux.tar.gz` |
 
 After installation, run:
 
@@ -76,20 +77,19 @@ After installation, run:
 hoshi
 ```
 
-## Package Managers
+## One-Click Install
 
 ```bash
-# macOS / Linuxbrew, installs Python automatically if needed
-brew install --formula https://raw.githubusercontent.com/AkihaZhang/Hoshi-Reader-Terminal/main/Formula/hoshi-reader-terminal.rb
-
-# Windows / Scoop, installs Python automatically if needed
-scoop bucket add hoshi-reader-terminal https://github.com/AkihaZhang/Hoshi-Reader-Terminal
-scoop install hoshi-reader-terminal
-
-# Debian / Ubuntu, downloads from GitHub Releases and installs python3 if needed
-curl -L https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/download/v0.1.3/hoshi-reader-terminal_0.1.3_all.deb -o /tmp/hoshi-reader-terminal.deb
-sudo apt install /tmp/hoshi-reader-terminal.deb
+# macOS / Linux
+curl -fsSL https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download/install.sh | sh
 ```
+
+```powershell
+# Windows PowerShell
+irm https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download/install.ps1 | iex
+```
+
+The script downloads the latest release package for your OS and installs the `hoshi` command. Python 3.10+ is required; if Python is missing, the script prints what to do next.
 
 ## Commands
 
@@ -108,9 +108,10 @@ stats                        Show reading statistics
 sync [auto|export|import]    Sync reading progress
 settings                     Open settings
 doctor                       Check runtime environment
+update                       Check GitHub Releases for updates
 ```
 
-Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导入词典`, `制卡`, `统计`, `同步`, `设置`, and `诊断` are also supported.
+Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导入词典`, `制卡`, `统计`, `同步`, `设置`, `诊断`, and `检查更新` are also supported.
 
 ## From Source
 
@@ -145,7 +146,7 @@ python3 scripts/generate_readme_assets.py
 python3 scripts/build_packages.py
 ```
 
-Release packages can be generated with `scripts/build_packages.py`. Homebrew, Scoop, and deb installs handle the Python dependency through the package manager.
+Release packages can be generated with `scripts/build_packages.py`. Releases ship the three portable OS packages plus one-click install scripts.
 
 ## Privacy And Data
 

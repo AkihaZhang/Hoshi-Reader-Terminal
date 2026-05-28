@@ -8,7 +8,8 @@ __pycache__/
 dist/*
 !dist/*.zip
 !dist/*.tar.gz
-!dist/*.deb
+!dist/install.sh
+!dist/install.ps1
 build/
 .hoshi-terminal/
 *.pyz

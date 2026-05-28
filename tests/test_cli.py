@@ -1,9 +1,12 @@
 from pathlib import Path
+from io import StringIO
+import os
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
-from hoshi_terminal.cli import _find_book_for_input, _language_name, create_backup
+from hoshi_terminal.cli import _find_book_for_input, _language_name, create_backup, main
 from hoshi_terminal.storage import Library
 
 
@@ -36,6 +39,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(_language_name("zh"), "简体中文")
         self.assertEqual(_language_name("en"), "English")
         self.assertEqual(_language_name("ja"), "日本語")
+
+    def test_no_args_opens_menu(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = StringIO()
+            with (
+                patch.dict(os.environ, {"HOSHI_TERMINAL_HOME": str(Path(temp_dir) / "state"), "NO_COLOR": "1"}),
+                patch("builtins.input", return_value="0"),
+                patch("sys.stdout", output),
+            ):
+                code = main([])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Hoshi Reader", output.getvalue())
+        self.assertIn("1. 书库", output.getvalue())
 
     def test_backup_is_created_outside_library_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

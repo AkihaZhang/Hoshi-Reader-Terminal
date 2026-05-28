@@ -12,14 +12,14 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 APP_NAME = "Hoshi-Reader-Terminal"
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 PACKAGE_BASE = f"{APP_NAME}-{VERSION}"
 
 
 WINDOWS_RUN = """@echo off
 chcp 65001 >nul
 set SCRIPT_DIR=%~dp0
-py "%SCRIPT_DIR%hoshi-terminal.pyz" %*
+py -3 "%SCRIPT_DIR%hoshi-terminal.pyz" %*
 if errorlevel 9009 (
   python "%SCRIPT_DIR%hoshi-terminal.pyz" %*
 )
@@ -28,7 +28,7 @@ if errorlevel 9009 (
 WINDOWS_HOSHI = """@echo off
 chcp 65001 >nul
 set SCRIPT_DIR=%~dp0
-py "%SCRIPT_DIR%hoshi-terminal.pyz" %*
+py -3 "%SCRIPT_DIR%hoshi-terminal.pyz" %*
 if errorlevel 9009 (
   python "%SCRIPT_DIR%hoshi-terminal.pyz" %*
 )
@@ -43,12 +43,12 @@ if not exist "%TARGET%" mkdir "%TARGET%"
 copy /Y "%SCRIPT_DIR%hoshi-terminal.pyz" "%TARGET%\\hoshi-terminal.pyz" >nul
 (
   echo @echo off
-  echo py "%%LOCALAPPDATA%%\\HoshiReaderTerminal\\bin\\hoshi-terminal.pyz" %%*
+  echo py -3 "%%LOCALAPPDATA%%\\HoshiReaderTerminal\\bin\\hoshi-terminal.pyz" %%*
   echo if errorlevel 9009 python "%%LOCALAPPDATA%%\\HoshiReaderTerminal\\bin\\hoshi-terminal.pyz" %%*
 ) > "%TARGET%\\hoshi-terminal.cmd"
 (
   echo @echo off
-  echo py "%%LOCALAPPDATA%%\\HoshiReaderTerminal\\bin\\hoshi-terminal.pyz" %%*
+  echo py -3 "%%LOCALAPPDATA%%\\HoshiReaderTerminal\\bin\\hoshi-terminal.pyz" %%*
   echo if errorlevel 9009 python "%%LOCALAPPDATA%%\\HoshiReaderTerminal\\bin\\hoshi-terminal.pyz" %%*
 ) > "%TARGET%\\hoshi.cmd"
 echo Installed to %TARGET%
@@ -120,12 +120,12 @@ def main() -> int:
     _package_windows(pyz)
     _package_posix(pyz, "macos")
     _package_posix(pyz, "linux")
-    _package_deb(pyz)
+    _copy_install_scripts()
     print("打包完成：")
     for artifact in sorted(DIST.glob(f"{PACKAGE_BASE}-*")):
         if artifact.is_file():
             print(f"  {artifact}")
-    for artifact in sorted(DIST.glob("hoshi-reader-terminal_*.deb")):
+    for artifact in (DIST / "install.sh", DIST / "install.ps1"):
         print(f"  {artifact}")
     return 0
 
@@ -141,6 +141,9 @@ def _clean_old_artifacts() -> None:
         old_pyz.unlink()
     for path in DIST.glob("hoshi-reader-terminal_*.deb"):
         path.unlink()
+    for path in (DIST / "install.sh", DIST / "install.ps1"):
+        if path.exists():
+            path.unlink()
 
 
 def _build_pyz(target: Path) -> None:
@@ -196,84 +199,14 @@ def _common_payload(folder: Path, pyz: Path) -> None:
     _write_text(folder / "INSTALL.zh-CN.txt", README_TXT)
 
 
-def _package_deb(pyz: Path) -> None:
-    package_name = "hoshi-reader-terminal"
-    with TemporaryDirectory() as temp_dir:
-        temp = Path(temp_dir)
-        debian_binary = temp / "debian-binary"
-        debian_binary.write_text("2.0\n", encoding="utf-8")
-
-        control = temp / "control"
-        control.write_text(
-            f"""Package: {package_name}
-Version: {VERSION}
-Section: text
-Priority: optional
-Architecture: all
-Depends: python3 (>= 3.10)
-Maintainer: Hoshi Reader Terminal contributors
-Description: Terminal reader inspired by Hoshi Reader
- A terminal interface for reading, dictionary lookup, card creation, and progress sync.
-""",
-            encoding="utf-8",
-            newline="\n",
-        )
-        control_tar = temp / "control.tar.gz"
-        with tarfile.open(control_tar, "w:gz") as archive:
-            archive.add(control, arcname="./control")
-
-        data_root = temp / "data"
-        app_dir = data_root / "usr" / "share" / package_name
-        bin_dir = data_root / "usr" / "bin"
-        doc_dir = data_root / "usr" / "share" / "doc" / package_name
-        app_dir.mkdir(parents=True)
-        bin_dir.mkdir(parents=True)
-        doc_dir.mkdir(parents=True)
-        shutil.copy2(pyz, app_dir / "hoshi-terminal.pyz")
-        shutil.copytree(ROOT / "examples", app_dir / "examples")
-        shutil.copy2(ROOT / "README.md", doc_dir / "README.md")
-        shutil.copy2(ROOT / "README.zh-CN.md", doc_dir / "README.zh-CN.md")
-        shutil.copy2(ROOT / "LICENSE", doc_dir / "copyright")
-        launcher = """#!/bin/sh
-exec python3 /usr/share/hoshi-reader-terminal/hoshi-terminal.pyz "$@"
-"""
-        _write_text(bin_dir / "hoshi", launcher)
-        _write_text(bin_dir / "hoshi-terminal", launcher)
-        _chmod_executable(bin_dir / "hoshi")
-        _chmod_executable(bin_dir / "hoshi-terminal")
-
-        data_tar = temp / "data.tar.gz"
-        with tarfile.open(data_tar, "w:gz") as archive:
-            for path in sorted(data_root.rglob("*")):
-                archive.add(path, arcname="./" + str(path.relative_to(data_root)))
-
-        target = DIST / f"{package_name}_{VERSION}_all.deb"
-        _write_ar_archive(target, [debian_binary, control_tar, data_tar])
+def _copy_install_scripts() -> None:
+    shutil.copy2(ROOT / "install.sh", DIST / "install.sh")
+    shutil.copy2(ROOT / "install.ps1", DIST / "install.ps1")
+    _chmod_executable(DIST / "install.sh")
 
 
 def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")
-
-
-def _write_ar_archive(target: Path, files: list[Path]) -> None:
-    with target.open("wb") as output:
-        output.write(b"!<arch>\n")
-        for file_path in files:
-            data = file_path.read_bytes()
-            name = file_path.name + "/"
-            header = (
-                f"{name:<16}"
-                f"{0:<12}"
-                f"{0:<6}"
-                f"{0:<6}"
-                f"{'100644':<8}"
-                f"{len(data):<10}"
-                "`\n"
-            )
-            output.write(header.encode("ascii"))
-            output.write(data)
-            if len(data) % 2:
-                output.write(b"\n")
 
 
 def _chmod_executable(path: Path) -> None:
