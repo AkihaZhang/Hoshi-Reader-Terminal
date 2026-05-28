@@ -8,6 +8,7 @@ import platform
 import re
 import shutil
 import subprocess
+import time
 
 from .epub import Chapter, ExtractedBook
 
@@ -254,12 +255,60 @@ def format_time(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{sec:02d}.{millis:03d}"
 
 
-def audio_command(audio_path: str | Path, start_time: float = 0.0, rate: float = 1.0) -> tuple[list[str], str]:
+class SasayakiPlayer:
+    def __init__(self) -> None:
+        self.process: subprocess.Popen[bytes] | None = None
+
+    def play(
+        self,
+        audio_path: str | Path,
+        start_time: float = 0.0,
+        rate: float = 1.0,
+        duration: float | None = None,
+    ) -> tuple[list[str], str]:
+        self.stop()
+        command, player = audio_command(audio_path, start_time=start_time, rate=rate, duration=duration)
+        self.process = _open_audio_process(command, player)
+        return command, player
+
+    def stop(self, timeout: float = 0.3) -> None:
+        process = self.process
+        self.process = None
+        if process is None or process.poll() is not None:
+            return
+        process.terminate()
+        deadline = time.monotonic() + timeout
+        while process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.03)
+        if process.poll() is None:
+            process.kill()
+
+
+def audio_command(
+    audio_path: str | Path,
+    start_time: float = 0.0,
+    rate: float = 1.0,
+    duration: float | None = None,
+) -> tuple[list[str], str]:
     path = str(Path(audio_path).expanduser())
+    start = max(0.0, start_time)
+    speed = max(0.1, rate)
+    length = max(0.05, duration) if duration is not None else None
     if shutil.which("mpv"):
-        return ["mpv", f"--start={max(0.0, start_time):.3f}", f"--speed={max(0.1, rate):.3f}", path], "mpv"
+        command = ["mpv", "--no-video", "--force-window=no", "--really-quiet", f"--start={start:.3f}", f"--speed={speed:.3f}"]
+        if length is not None:
+            command.append(f"--length={length:.3f}")
+        command.append(path)
+        return command, "mpv"
     if shutil.which("ffplay"):
-        return ["ffplay", "-nodisp", "-autoexit", "-ss", f"{max(0.0, start_time):.3f}", path], "ffplay"
+        command = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", "-ss", f"{start:.3f}"]
+        if length is not None:
+            command.extend(["-t", f"{length:.3f}"])
+        filter_chain = ffplay_atempo_filter(speed)
+        if filter_chain:
+            command.extend(["-af", filter_chain])
+        command.append(path)
+        return command, "ffplay"
     system = platform.system()
     if system == "Darwin":
         return ["open", path], "open"
@@ -270,10 +319,33 @@ def audio_command(audio_path: str | Path, start_time: float = 0.0, rate: float =
     raise RuntimeError("没有找到可用音频播放器。建议安装 mpv 或 ffplay。")
 
 
-def launch_audio(audio_path: str | Path, start_time: float = 0.0, rate: float = 1.0) -> tuple[list[str], str]:
-    command, player = audio_command(audio_path, start_time=start_time, rate=rate)
-    if player == "start":
-        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
-    else:
-        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def launch_audio(
+    audio_path: str | Path,
+    start_time: float = 0.0,
+    rate: float = 1.0,
+    duration: float | None = None,
+) -> tuple[list[str], str]:
+    command, player = audio_command(audio_path, start_time=start_time, rate=rate, duration=duration)
+    _open_audio_process(command, player)
     return command, player
+
+
+def ffplay_atempo_filter(rate: float) -> str:
+    speed = max(0.1, rate)
+    filters: list[str] = []
+    while speed > 2.0:
+        filters.append("atempo=2.0")
+        speed /= 2.0
+    while speed < 0.5:
+        filters.append("atempo=0.5")
+        speed /= 0.5
+    if abs(speed - 1.0) > 0.01:
+        filters.append(f"atempo={speed:.3f}")
+    return ",".join(filters)
+
+
+def _open_audio_process(command: list[str], player: str) -> subprocess.Popen[bytes] | None:
+    if player in {"open", "start", "xdg-open"}:
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
+        return None
+    return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

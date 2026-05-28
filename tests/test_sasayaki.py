@@ -7,6 +7,7 @@ from hoshi_terminal.sasayaki import (
     SasayakiCue,
     SasayakiMatch,
     SasayakiMatchData,
+    ffplay_atempo_filter,
     find_cue_for_page,
     filter_sasayaki_text,
     format_time,
@@ -87,6 +88,11 @@ class SasayakiTests(unittest.TestCase):
 
     def test_format_time(self) -> None:
         self.assertEqual(format_time(3723.456), "01:02:03.456")
+
+    def test_ffplay_atempo_filter_chains_out_of_range_speeds(self) -> None:
+        self.assertEqual(ffplay_atempo_filter(1.0), "")
+        self.assertEqual(ffplay_atempo_filter(2.5), "atempo=2.0,atempo=1.250")
+        self.assertEqual(ffplay_atempo_filter(0.25), "atempo=0.5,atempo=0.500")
 
 
 if __name__ == "__main__":

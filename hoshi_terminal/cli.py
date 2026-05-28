@@ -24,6 +24,7 @@ from .reader import Page, character_count, page_for_position, paginate, render_p
 from .sasayaki import (
     SasayakiMatch,
     SasayakiMatchData,
+    SasayakiPlayer,
     cue_at_time,
     find_cue_for_page,
     format_time,
@@ -37,7 +38,7 @@ from .sasayaki import (
 from .storage import BookRecord, Library, summarize_text_progress
 from .sync import sync_library
 from .terminal import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, YELLOW, banner, clear_screen, style, terminal_size
-from .updates import check_for_updates, format_update_info
+from .updates import check_for_updates, format_update_info, format_update_install_result, install_latest_update
 
 
 BOOK_SUFFIXES = {".epub", ".txt", ".md", ".markdown", ".html", ".htm", ".xhtml"}
@@ -215,6 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
     sasayaki.add_argument("--cue", type=int, metavar="N", help="播放/显示第 N 条匹配台词")
     sasayaki.add_argument("--rate", type=float, metavar="倍速", help="播放倍速")
     sasayaki.add_argument("--delay", type=float, metavar="秒", help="播放延迟，正数表示更晚开始")
+    sasayaki.add_argument("--line", action="store_true", help="只播放这一条台词的时间范围")
     sasayaki.set_defaults(func=cmd_sasayaki)
 
     settings = subparsers.add_parser("settings", aliases=["设置"], help="打开设置")
@@ -223,7 +225,10 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = subparsers.add_parser("doctor", aliases=["诊断"], help="检查运行环境")
     doctor.set_defaults(func=cmd_doctor)
 
-    update = subparsers.add_parser("update", aliases=["检查更新"], help="在线检查新版本")
+    update = subparsers.add_parser("update", aliases=["检查更新", "更新"], help="检查或安装新版本")
+    update.add_argument("--check", action="store_true", help="只检查，不安装")
+    update.add_argument("-y", "--yes", action="store_true", help="发现更新时直接安装")
+    update.add_argument("--target", metavar="PYZ", help="指定要替换的 hoshi-terminal.pyz")
     update.set_defaults(func=cmd_update)
 
     return parser
@@ -386,7 +391,7 @@ def cmd_sasayaki(args: argparse.Namespace) -> int:
     if action == "list":
         return _sasayaki_list(library, record, cue_index=args.cue)
     if action == "play":
-        return _sasayaki_play(library, record, cue_index=args.cue, rate=args.rate, delay=args.delay)
+        return _sasayaki_play(library, record, cue_index=args.cue, rate=args.rate, delay=args.delay, line_only=args.line)
     return _sasayaki_status(library, record)
 
 
@@ -406,7 +411,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_update(args: argparse.Namespace) -> int:
-    print(check_update_message())
+    info = check_for_updates(__version__)
+    if args.check or not info.has_update:
+        print(format_update_info(info))
+        return 0
+    print(format_update_info(info))
+    if not args.yes and sys.stdin.isatty():
+        confirm = _read_input(style("现在更新？[y/N] ", CYAN)).strip().lower()
+        if confirm not in {"y", "yes", "是"}:
+            print("已取消更新。")
+            return 0
+    result = install_latest_update(__version__, target=args.target, info=info)
+    print(format_update_install_result(result))
     return 0
 
 
@@ -537,6 +553,8 @@ def _sasayaki_play(
     cue_index: int | None = None,
     rate: float | None = None,
     delay: float | None = None,
+    line_only: bool = False,
+    player_session: SasayakiPlayer | None = None,
 ) -> int:
     data = library.sasayaki_for(record)
     match = _sasayaki_match_data(data)
@@ -557,11 +575,16 @@ def _sasayaki_play(
         raise ValueError("没有可播放的匹配台词。")
 
     start_time = max(0.0, cue.start_time + float(playback.get("delay", 0.0)))
-    command, player = launch_audio(audio_path, start_time=start_time, rate=float(playback.get("rate", 1.0)))
+    duration = max(0.1, cue.end_time - cue.start_time) if line_only else None
+    if player_session is None:
+        command, player = launch_audio(audio_path, start_time=start_time, rate=float(playback.get("rate", 1.0)), duration=duration)
+    else:
+        command, player = player_session.play(audio_path, start_time=start_time, rate=float(playback.get("rate", 1.0)), duration=duration)
     playback["lastPosition"] = cue.start_time
     data["playback"] = playback
     library.set_sasayaki(record, data)
-    print(style("Sasayaki 播放", GREEN), f"{format_time(cue.start_time)}  {cue.text}")
+    label = "Sasayaki 播放本句" if line_only else "Sasayaki 从此句播放"
+    print(style(label, GREEN), f"{format_time(cue.start_time)}  {cue.text}")
     if player in {"open", "start", "xdg-open"}:
         print(style("提示", YELLOW), "系统默认播放器可能不会跳到指定时间；安装 mpv 或 ffplay 可按台词起点播放。")
     print(style("播放器", DIM), player, " ".join(command))
@@ -667,29 +690,44 @@ def _reader_sasayaki_panel(library: Library, record: BookRecord | None, page: Pa
         _read_input(style("按 Enter 继续", DIM))
         return
 
-    while True:
-        print(style("Sasayaki", BOLD), f"{match_rate_text(match)}")
-        cue_index = match.matches.index(cue) + 1
-        _print_sasayaki_cue(cue, cue_index)
-        print("1. 播放这一句")
-        print("2. 上一句")
-        print("3. 下一句")
-        print("0. 返回阅读")
-        choice = _read_input(style("请选择：", CYAN)).strip()
-        if choice == "1":
-            try:
-                _sasayaki_play(library, record, cue_index=cue_index)
-            except Exception as exc:
-                print(style(f"播放失败：{exc}", YELLOW))
-            _read_input(style("按 Enter 继续", DIM))
-        elif choice == "2":
-            cue = previous_cue(match, cue.start_time) or cue
-        elif choice == "3":
-            cue = next_cue(match, cue.start_time) or cue
-        elif choice in {"0", "q", "Q", "返回"}:
-            return
-        else:
-            print("没有这个 Sasayaki 选项。")
+    player = SasayakiPlayer()
+    try:
+        while True:
+            print(style("Sasayaki", BOLD), f"{match_rate_text(match)}")
+            cue_index = match.matches.index(cue) + 1
+            _print_sasayaki_cue(cue, cue_index)
+            print("1. 播放这一句")
+            print("2. 从这一句继续")
+            print("3. 停止播放")
+            print("4. 上一句")
+            print("5. 下一句")
+            print("0. 返回阅读")
+            choice = _read_input(style("请选择：", CYAN)).strip()
+            if choice == "1":
+                try:
+                    _sasayaki_play(library, record, cue_index=cue_index, line_only=True, player_session=player)
+                except Exception as exc:
+                    print(style(f"播放失败：{exc}", YELLOW))
+                _read_input(style("按 Enter 继续", DIM))
+            elif choice == "2":
+                try:
+                    _sasayaki_play(library, record, cue_index=cue_index, player_session=player)
+                except Exception as exc:
+                    print(style(f"播放失败：{exc}", YELLOW))
+                _read_input(style("按 Enter 继续", DIM))
+            elif choice == "3":
+                player.stop()
+                print(style("已停止", GREEN))
+            elif choice == "4":
+                cue = previous_cue(match, cue.start_time) or cue
+            elif choice == "5":
+                cue = next_cue(match, cue.start_time) or cue
+            elif choice in {"0", "q", "Q", "返回"}:
+                return
+            else:
+                print("没有这个 Sasayaki 选项。")
+    finally:
+        player.stop()
 
 
 def interactive_loop(
@@ -1528,7 +1566,7 @@ def _advanced_backup() -> None:
 
 def _advanced_check_update() -> None:
     try:
-        print(check_update_message())
+        cmd_update(argparse.Namespace(check=False, yes=False, target=None))
     except RuntimeError as exc:
         print(style(str(exc), YELLOW))
     _pause()

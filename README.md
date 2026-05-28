@@ -52,8 +52,9 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 
 - Ports the core upstream Sasayaki flow: parse SubPlz `.srt` files, filter book text, match cues in reading order, and report a match rate.
 - Save each book's SRT path, audio file, playback position, delay, and playback speed.
-- Press `y` inside the reader to inspect the current matched cue, or use `sasayaki list/play` from the command line.
-- Audio playback prefers `mpv`, then `ffplay`; if no seek-capable player is available, it falls back to opening the file with the OS.
+- Press `y` inside the reader to inspect the current matched cue, play only that line, resume from that cue, stop, or move to previous/next cues.
+- Use `sasayaki list/play` from the command line. `sasayaki play --line` limits playback to the current cue range.
+- Audio playback prefers `mpv`, then `ffplay`; `ffplay` speed playback uses generated `atempo` filter chains. If no seek-capable player is available, it falls back to opening the file with the OS.
 
 ### Anki Cards
 
@@ -71,17 +72,17 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 - Launch the terminal menu with `hoshi`.
 - Switch interface labels between Simplified Chinese, English, and Japanese.
 - Uses a neofetch-style terminal logo based on the Hoshi icon.
-- Check GitHub Releases for updates from the terminal.
+- Check GitHub Releases from the terminal and update the current portable install in place.
 
 ## Download
 
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.8). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.9). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.8-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.8-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.8-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.9-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.9-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.9-linux.tar.gz` |
 
 After installation, run:
 
@@ -121,12 +122,14 @@ sync [auto|export|import]    Sync reading progress
 sasayaki status BOOK         Show audiobook matching state
 sasayaki match BOOK SRT      Match an SRT file, optionally with --audio
 sasayaki list/play BOOK      List or play matched cues
+sasayaki play BOOK --line    Play only the current cue time range
 settings                     Open settings
 doctor                       Check runtime environment
 update                       Check GitHub Releases for updates
+update -y                    Download the release package and replace the current pyz
 ```
 
-Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导入词典`, `制卡`, `统计`, `同步`, `有声书`, `设置`, `诊断`, and `检查更新` are also supported.
+Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导入词典`, `制卡`, `统计`, `同步`, `有声书`, `设置`, `诊断`, `检查更新`, and `更新` are also supported. Use `hoshi update --check` for a check-only run.
 
 ## From Source
 
