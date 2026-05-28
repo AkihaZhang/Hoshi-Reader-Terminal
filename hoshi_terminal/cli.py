@@ -10,7 +10,15 @@ import zipfile
 
 from . import __version__
 from .anki import AnkiConnectError, add_note, settings_from_dict, version as ankiconnect_version
-from .dictionary import DICTIONARY_TYPES, TYPE_LABELS, DictionaryManager, find_yomitan_sources, format_results, normalize_dictionary_type
+from .dictionary import (
+    DICTIONARY_TYPES,
+    TYPE_LABELS,
+    DictionaryManager,
+    find_yomitan_sources,
+    format_result_pages,
+    format_results,
+    normalize_dictionary_type,
+)
 from .epub import extract_book
 from .reader import Page, character_count, page_for_position, paginate, render_page, sentence_around
 from .storage import BookRecord, Library, summarize_text_progress
@@ -258,8 +266,8 @@ def cmd_read(args: argparse.Namespace) -> int:
 
 
 def cmd_lookup(args: argparse.Namespace) -> int:
-    manager = DictionaryManager(Library().dictionary_file)
-    print(format_results(manager.lookup(args.word)))
+    library = Library()
+    _show_lookup(args.word, library)
     return 0
 
 
@@ -353,6 +361,49 @@ def check_update_message() -> str:
     return format_update_info(info)
 
 
+def _show_lookup(word: str, library: Library | None = None) -> None:
+    library = library or Library()
+    results = DictionaryManager(library.dictionary_file).lookup(word)
+    if not sys.stdin.isatty():
+        print(format_results(results))
+        return
+    _lookup_pager(word, results, library)
+
+
+def _lookup_pager(word: str, results: object, library: Library) -> None:
+    current_word = word
+    page_index = 0
+    current_results = results
+    while True:
+        columns, rows = terminal_size()
+        pages = format_result_pages(current_results, lines_per_page=max(8, rows - 7), width=max(40, columns - 2))
+        page_index = max(0, min(page_index, len(pages) - 1))
+        print(clear_screen(), end="")
+        print(style(f"查词 {current_word}  第 {page_index + 1}/{len(pages)} 页", BOLD))
+        print(style("─" * min(96, max(24, len(current_word) + 18)), CYAN))
+        print(pages[page_index])
+        print(style("─" * min(96, max(24, len(current_word) + 18)), CYAN))
+        print(style("→/↓ 下一页    ←/↑ 上一页    /词 递归查词    a 词 制卡    q 返回", DIM))
+        command = _read_reader_command(style("dict> ", CYAN)).strip()
+        if command in {"right", "down"}:
+            page_index = min(len(pages) - 1, page_index + 1)
+        elif command in {"left", "up"}:
+            page_index = max(0, page_index - 1)
+        elif command in {"q", "quit", "exit"}:
+            return
+        elif command.startswith("/"):
+            next_word = command[1:].strip()
+            if next_word:
+                current_word = next_word
+                current_results = DictionaryManager(library.dictionary_file).lookup(next_word)
+                page_index = 0
+        elif command.startswith("a "):
+            card_word = command[2:].strip()
+            if card_word:
+                print(mine_word(card_word))
+                _read_input(style("按 Enter 继续", DIM))
+
+
 def interactive_loop(
     title: str,
     text: str,
@@ -381,8 +432,8 @@ def interactive_loop(
             vertical = not vertical
         elif command.startswith("/"):
             word = command[1:].strip()
-            print(format_results(DictionaryManager(library.dictionary_file).lookup(word)))
-            _read_input(style("按 Enter 继续", DIM))
+            if word:
+                _show_lookup(word, library)
         elif command.startswith("a "):
             word = command[2:].strip()
             sentence = sentence_around(page.text, word)
@@ -488,8 +539,7 @@ def dictionary_menu() -> int:
         if choice == "1":
             word = _read_input("请输入要查的词：").strip()
             if word:
-                print(format_results(DictionaryManager(Library().dictionary_file).lookup(word)))
-            _pause()
+                _show_lookup(word, library)
         elif choice == "2":
             _dictionary_import_prompt()
         elif choice == "3":
@@ -604,8 +654,9 @@ def _menu_lookup() -> None:
             print(style("词典已导入", GREEN), f"新增 {count} 条")
     word = _read_input("请输入要查的词：").strip()
     if word:
-        print(format_results(DictionaryManager(library.dictionary_file).lookup(word)))
-    _pause()
+        _show_lookup(word, library)
+    else:
+        _pause()
 
 
 def _dictionary_import_prompt() -> None:

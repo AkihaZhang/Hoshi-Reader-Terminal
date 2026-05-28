@@ -41,6 +41,7 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 - Import Yomitan Term / Frequency / Pitch dictionaries from folders or zip files.
 - Enable, disable, and reorder dictionaries inside each type.
 - Search from the Dictionary menu, the command line, or inside the reader.
+- Page through long lookup results with arrow keys, and run recursive `/word` lookups inside the result view.
 - Includes lightweight Japanese deinflection for common polite and past forms.
 
 ### Anki Cards
@@ -63,13 +64,13 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 
 ## Download
 
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.5). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.6). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.5-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.5-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.5-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.6-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.6-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.6-linux.tar.gz` |
 
 After installation, run:
 

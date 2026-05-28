@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from hoshi_terminal.dictionary import DictionaryManager, deinflect, format_results
+from hoshi_terminal.dictionary import DictionaryManager, deinflect, format_result_pages, format_results, paginate_lookup_text
 
 
 class DictionaryTests(unittest.TestCase):
@@ -47,6 +47,33 @@ class DictionaryTests(unittest.TestCase):
         self.assertIn("前方扫描", results[0].note)
         self.assertIn("▼ Tiny", rendered)
         self.assertIn("[common / 名詞]", rendered)
+
+    def test_lookup_output_can_be_paginated(self) -> None:
+        pages = paginate_lookup_text("one\ntwo\nthree\n\nfour\nfive", lines_per_page=3)
+        self.assertEqual(len(pages), 2)
+        self.assertIn("one", pages[0])
+        self.assertIn("four", pages[1])
+
+    def test_lookup_pagination_wraps_long_dictionary_lines(self) -> None:
+        text = "1. 秋\n   ▼ Tiny\n      ・ " + "長い説明" * 24
+        pages = paginate_lookup_text(text, lines_per_page=4, width=32)
+        self.assertGreater(len(pages), 1)
+
+    def test_formatted_results_can_be_paginated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            dictionary = root / "dict"
+            dictionary.mkdir()
+            (dictionary / "index.json").write_text('{"title":"Tiny"}', encoding="utf-8")
+            (dictionary / "term_bank_1.json").write_text(
+                '[["星","ほし","","",0,["star one","star two","star three","star four"],1,""]]',
+                encoding="utf-8",
+            )
+            manager = DictionaryManager(root / "entries.json")
+            manager.import_yomitan(dictionary)
+            pages = format_result_pages(manager.lookup("星"), lines_per_page=4)
+
+        self.assertGreaterEqual(len(pages), 2)
 
     def test_lookup_deinflected_polite_form(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

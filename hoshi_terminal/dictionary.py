@@ -8,6 +8,7 @@ from typing import Callable, Iterable, Iterator
 import json
 import re
 import sqlite3
+import textwrap
 import zipfile
 
 
@@ -696,6 +697,65 @@ def format_results(results: list[LookupResult]) -> str:
                     lines.append(f"      {marker} {_shorten(definition, 520)}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
+
+
+def format_result_pages(results: list[LookupResult], lines_per_page: int = 18, width: int = 88) -> list[str]:
+    return paginate_lookup_text(format_results(results), lines_per_page, width)
+
+
+def paginate_lookup_text(text: str, lines_per_page: int = 18, width: int = 88) -> list[str]:
+    lines_per_page = max(4, lines_per_page)
+    width = max(24, width)
+    blocks = [
+        "\n".join(line for raw_line in block.splitlines() for line in _wrap_lookup_line(raw_line, width))
+        for block in text.split("\n\n")
+    ]
+    pages: list[str] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        nonlocal current
+        if current:
+            pages.append("\n".join(current).rstrip())
+            current = []
+
+    for block in blocks:
+        block_lines = block.splitlines() or [""]
+        if len(block_lines) > lines_per_page:
+            flush()
+            for start in range(0, len(block_lines), lines_per_page):
+                pages.append("\n".join(block_lines[start : start + lines_per_page]).rstrip())
+            continue
+
+        separator = 1 if current else 0
+        if current and len(current) + separator + len(block_lines) > lines_per_page:
+            flush()
+            separator = 0
+        if separator:
+            current.append("")
+        current.extend(block_lines)
+
+    flush()
+    return pages or [text]
+
+
+def _wrap_lookup_line(line: str, width: int) -> list[str]:
+    if len(line) <= width:
+        return [line]
+    indent_length = len(line) - len(line.lstrip(" "))
+    indent = line[:indent_length]
+    content = line[indent_length:]
+    wrapped = textwrap.wrap(
+        content,
+        width=max(12, width - indent_length),
+        initial_indent=indent,
+        subsequent_indent=indent + "  ",
+        break_long_words=True,
+        break_on_hyphens=False,
+        replace_whitespace=False,
+        drop_whitespace=False,
+    )
+    return wrapped or [line]
 
 
 def find_yomitan_sources(path: str | Path) -> list[Path]:
