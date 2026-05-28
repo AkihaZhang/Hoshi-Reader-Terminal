@@ -10,6 +10,9 @@ class EpubExtractionTests(unittest.TestCase):
     def test_strip_html_preserves_text(self) -> None:
         self.assertEqual(strip_html("<h1>Title</h1><p>読む 星</p>"), "Title\n読む 星")
 
+    def test_strip_html_omits_ruby_readings(self) -> None:
+        self.assertEqual(strip_html("<p><ruby>猪<rt>ちよ</rt>八<rt>はつ</rt>戒<rt>かい</rt></ruby>だ。</p>"), "猪八戒だ。")
+
     def test_extract_minimal_epub(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "sample.epub"

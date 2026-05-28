@@ -1,6 +1,15 @@
 import unittest
 
-from hoshi_terminal.reader import Page, character_count, paginate, render_page, render_vertical, sentence_around
+from hoshi_terminal.reader import (
+    Page,
+    character_count,
+    paginate,
+    render_page,
+    render_vertical,
+    sentence_around,
+    terminal_cell_width,
+    vertical_cell,
+)
 
 
 class ReaderTests(unittest.TestCase):
@@ -14,6 +23,12 @@ class ReaderTests(unittest.TestCase):
     def test_vertical_renderer_has_content(self) -> None:
         rendered = render_vertical("端末で読む", rows=4)
         self.assertIn("端", rendered)
+
+    def test_vertical_renderer_uses_terminal_cell_widths(self) -> None:
+        self.assertEqual(terminal_cell_width("星"), 2)
+        self.assertEqual(terminal_cell_width("あ"), 2)
+        self.assertEqual(terminal_cell_width("｡"), 1)
+        self.assertEqual(vertical_cell("。"), "｡ ")
 
     def test_reader_footer_only_advertises_arrows_for_page_turning(self) -> None:
         rendered = render_page("demo", Page(0, 0, 1, "本文"), 2)

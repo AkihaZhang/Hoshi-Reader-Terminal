@@ -2,8 +2,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import unicodedata
 
 from .terminal import BOLD, CYAN, DIM, GREEN, style, terminal_size, wrap_paragraphs
+
+
+VERTICAL_NARROW_MAP = {
+    "、": "､",
+    "。": "｡",
+    "，": ",",
+    "．": ".",
+    "：": ":",
+    "；": ";",
+    "！": "!",
+    "？": "?",
+    "「": "｢",
+    "」": "｣",
+    "『": "｢",
+    "』": "｣",
+    "（": "(",
+    "）": ")",
+    "［": "[",
+    "］": "]",
+    "【": "[",
+    "】": "]",
+    "・": "･",
+    "…": "…",
+}
 
 
 @dataclass(frozen=True)
@@ -58,7 +83,7 @@ def render_page(title: str, page: Page, total_pages: int, vertical: bool = False
     content = render_vertical(page.text) if vertical else page.text
     footer = "\n".join(
         [
-            style("→/↓ 下一页    ←/↑ 上一页    r 排版切换    s 统计    q 退出", DIM),
+            style("→/↓ 下一页    ←/↑ 上一页    r 排版切换    y Sasayaki    s 统计    q 退出", DIM),
             style("输入 /読みました 查词    输入 a 読む 制卡    输入 h 备注内容 划线", DIM),
         ]
     )
@@ -77,10 +102,30 @@ def render_vertical(text: str, rows: int | None = None) -> str:
     for row in range(rows):
         cells = []
         for chunk in reversed(chunks):
-            cells.append(chunk[row] if row < len(chunk) else " ")
+            cells.append(vertical_cell(chunk[row]) if row < len(chunk) else "  ")
         output.append(" ".join(cells).rstrip())
     warning = style("[竖排显示]", GREEN)
     return warning + "\n" + "\n".join(output).rstrip()
+
+
+def vertical_cell(char: str) -> str:
+    visible = VERTICAL_NARROW_MAP.get(char, char)
+    width = terminal_cell_width(visible)
+    if width <= 0:
+        return "  "
+    return visible + (" " * max(0, 2 - width))
+
+
+def terminal_cell_width(char: str) -> int:
+    if not char:
+        return 0
+    width = 0
+    for codepoint in char:
+        category = unicodedata.category(codepoint)
+        if category.startswith("M") or category == "Cf":
+            continue
+        width += 2 if unicodedata.east_asian_width(codepoint) in {"W", "F"} else 1
+    return width
 
 
 def sentence_around(text: str, needle: str) -> str:

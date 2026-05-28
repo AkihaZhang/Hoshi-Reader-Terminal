@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-A terminal Japanese EPUB reader inspired by [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) and [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android), with bookshelf management, Yomitan lookup, Anki card creation, reading statistics, and local progress sync.
+A terminal Japanese EPUB reader inspired by [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) and [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android), with bookshelf management, Yomitan lookup, Sasayaki audiobook matching, Anki card creation, reading statistics, and local progress sync.
 
 Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, dictionary lookup, and card creation entirely inside the terminal, thoroughly fixing the design flaw that Hoshi Reader is too easy to use.
 
@@ -18,6 +18,10 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 | --- | --- |
 | <img src="docs/images/04-sync.svg" alt="Sync screenshot"> | <img src="docs/images/05-settings.svg" alt="Settings screenshot"> |
 
+| Sasayaki |
+| --- |
+| <img src="docs/images/06-sasayaki.svg" alt="Sasayaki screenshot"> |
+
 ## Features
 
 ### Bookshelf
@@ -30,7 +34,7 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 ### Reading
 
 - Read in paginated terminal pages.
-- Switch between horizontal text and a simple terminal vertical layout.
+- Switch between horizontal text and terminal vertical layout. Vertical mode uses terminal cell widths: kanji/kana are treated as double-width, and common Japanese punctuation is narrowed for alignment.
 - Use clear reader commands with examples shown on screen:
   - `/読みました` for lookup
   - `a 読む` for card creation
@@ -43,6 +47,13 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 - Search from the Dictionary menu, the command line, or inside the reader.
 - Page through long lookup results with arrow keys, and run recursive `/word` lookups inside the result view.
 - Includes lightweight Japanese deinflection for common polite and past forms.
+
+### Sasayaki Audiobooks
+
+- Ports the core upstream Sasayaki flow: parse SubPlz `.srt` files, filter book text, match cues in reading order, and report a match rate.
+- Save each book's SRT path, audio file, playback position, delay, and playback speed.
+- Press `y` inside the reader to inspect the current matched cue, or use `sasayaki list/play` from the command line.
+- Audio playback prefers `mpv`, then `ffplay`; if no seek-capable player is available, it falls back to opening the file with the OS.
 
 ### Anki Cards
 
@@ -64,13 +75,13 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 
 ## Download
 
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.6). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.7). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.6-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.6-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.6-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.7-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.7-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.7-linux.tar.gz` |
 
 After installation, run:
 
@@ -107,12 +118,15 @@ dict-toggle TYPE INDEX [on|off] Enable or disable a dictionary
 card WORD                    Write CSV or send to AnkiConnect
 stats                        Show reading statistics
 sync [auto|export|import]    Sync reading progress
+sasayaki status BOOK         Show audiobook matching state
+sasayaki match BOOK SRT      Match an SRT file, optionally with --audio
+sasayaki list/play BOOK      List or play matched cues
 settings                     Open settings
 doctor                       Check runtime environment
 update                       Check GitHub Releases for updates
 ```
 
-Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导入词典`, `制卡`, `统计`, `同步`, `设置`, `诊断`, and `检查更新` are also supported.
+Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导入词典`, `制卡`, `统计`, `同步`, `有声书`, `设置`, `诊断`, and `检查更新` are also supported.
 
 ## From Source
 
@@ -155,7 +169,7 @@ Hoshi Reader Terminal stores imported books, dictionaries, card CSV files, readi
 
 ## Attribution
 
-The menu, reader, dictionary, Anki, and sync behavior follow Hoshi Reader iOS / Android where it makes sense for a terminal. Terminal-compatible interaction structure is adapted from upstream behavior, while the cross-platform CLI layer is implemented in Python here.
+The menu, reader, dictionary, Sasayaki, Anki, and sync behavior follow Hoshi Reader iOS / Android where it makes sense for a terminal. Terminal-compatible interaction structure is adapted from upstream behavior, while the cross-platform CLI layer is implemented in Python here.
 
 ## License
 

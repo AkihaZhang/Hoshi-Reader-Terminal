@@ -20,9 +20,24 @@ def main() -> int:
         home = Path(temp_dir) / "home"
         sync = Path(temp_dir) / "sync"
         demo = ROOT / "examples" / "demo_book.txt"
+        sasayaki_srt = Path(temp_dir) / "demo.srt"
+        sasayaki_srt.write_text(
+            "\n\n".join(
+                [
+                    "1\n00:00:01,000 --> 00:00:03,000\n端末で本を読むと、ページをめくる音はしない。",
+                    "2\n00:00:04,000 --> 00:00:06,000\nそのかわり、矢印キーで次のページへ進む。",
+                    "3\n00:00:07,000 --> 00:00:09,000\n辞書には「読む」という見出しが登録されていた。",
+                ]
+            ),
+            encoding="utf-8",
+        )
         _run(["python3", "-m", "hoshi_terminal", "导入", str(demo)], home=home)
         _run(["python3", "-m", "hoshi_terminal", "导入词典", str(ROOT / "examples" / "mini-yomitan")], home=home)
+        _run(["python3", "-m", "hoshi_terminal", "sasayaki", "match", "1", str(sasayaki_srt)], home=home)
         _set_demo_progress(home)
+        sasayaki_status = _run(["python3", "-m", "hoshi_terminal", "sasayaki", "status", "1"], home=home)
+        sasayaki_status = sasayaki_status.replace(str(sasayaki_srt.resolve()), "examples/demo.srt")
+        sasayaki_status = sasayaki_status.replace(str(sasayaki_srt), "examples/demo.srt")
 
         captures = {
             "01-menu.svg": _snippet(
@@ -59,11 +74,13 @@ def main() -> int:
                 print("2. 同步")
                 print("3. AnkiConnect")
                 print("4. 备份")
-                print("5. 检查更新")
+                print("5. Sasayaki 有声书")
+                print("6. 检查更新")
                 print("0. 返回")
                 """,
                 color=True,
             ),
+            "06-sasayaki.svg": sasayaki_status,
         }
 
     for name, text in captures.items():

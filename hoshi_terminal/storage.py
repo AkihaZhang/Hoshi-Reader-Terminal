@@ -259,6 +259,21 @@ class Library:
         )
         self._save_state()
 
+    def sasayaki_for(self, record: BookRecord) -> dict[str, object] | None:
+        records = self._state.setdefault("sasayaki", {})
+        if not isinstance(records, dict):
+            return None
+        item = records.get(record.id)
+        return item if isinstance(item, dict) else None
+
+    def set_sasayaki(self, record: BookRecord, data: dict[str, object]) -> None:
+        records = self._state.setdefault("sasayaki", {})
+        if not isinstance(records, dict):
+            records = {}
+            self._state["sasayaki"] = records
+        records[record.id] = data
+        self._save_state()
+
     def mine_card(self, word: str, sentence: str = "", note: str = "") -> Path:
         exists = self.cards_file.exists()
         with self.cards_file.open("a", encoding="utf-8", newline="") as handle:
@@ -278,6 +293,7 @@ class Library:
         state.setdefault("books", [])
         state.setdefault("statistics", [])
         state.setdefault("highlights", [])
+        state.setdefault("sasayaki", {})
         state.setdefault("settings", {})
         return state
 

@@ -21,6 +21,19 @@ from .dictionary import (
 )
 from .epub import extract_book
 from .reader import Page, character_count, page_for_position, paginate, render_page, sentence_around
+from .sasayaki import (
+    SasayakiMatch,
+    SasayakiMatchData,
+    cue_at_time,
+    find_cue_for_page,
+    format_time,
+    launch_audio,
+    match_rate_text,
+    match_sasayaki,
+    next_cue,
+    parse_srt,
+    previous_cue,
+)
 from .storage import BookRecord, Library, summarize_text_progress
 from .sync import sync_library
 from .terminal import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, YELLOW, banner, clear_screen, style, terminal_size
@@ -64,6 +77,7 @@ UI_TEXT = {
     "about": {"zh": "关于", "en": "About", "ja": "情報"},
     "statistics": {"zh": "统计", "en": "Statistics", "ja": "統計"},
     "sync": {"zh": "同步", "en": "Sync", "ja": "同期"},
+    "sasayaki": {"zh": "Sasayaki 有声书", "en": "Sasayaki Audiobook", "ja": "Sasayaki オーディオブック"},
     "backup": {"zh": "备份", "en": "Backup", "ja": "バックアップ"},
     "check_update": {"zh": "检查更新", "en": "Check Updates", "ja": "アップデート確認"},
     "writing_direction": {"zh": "文字方向", "en": "Writing Direction", "ja": "文字方向"},
@@ -191,6 +205,17 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("direction", nargs="?", default="auto", choices=["auto", "export", "import", "自动", "导出", "导入"])
     sync.add_argument("--path", metavar="目录", help="临时指定同步目录并保存")
     sync.set_defaults(func=cmd_sync)
+
+    sasayaki = subparsers.add_parser("sasayaki", aliases=["有声书", "低语"], help="Sasayaki 有声书匹配和播放")
+    sasayaki.add_argument("action", nargs="?", default="status", metavar="操作", help="status/list/match/audio/play")
+    sasayaki.add_argument("target", nargs="?", metavar="书", help="书架序号、id 或标题片段")
+    sasayaki.add_argument("path", nargs="?", metavar="路径", help="match 时为 SRT；audio 时为音频文件")
+    sasayaki.add_argument("--audio", metavar="音频文件", help="匹配时顺便保存音频文件")
+    sasayaki.add_argument("--window", type=int, default=200, metavar="N", help="匹配搜索窗口，默认 200")
+    sasayaki.add_argument("--cue", type=int, metavar="N", help="播放/显示第 N 条匹配台词")
+    sasayaki.add_argument("--rate", type=float, metavar="倍速", help="播放倍速")
+    sasayaki.add_argument("--delay", type=float, metavar="秒", help="播放延迟，正数表示更晚开始")
+    sasayaki.set_defaults(func=cmd_sasayaki)
 
     settings = subparsers.add_parser("settings", aliases=["设置"], help="打开设置")
     settings.set_defaults(func=cmd_settings)
@@ -336,6 +361,35 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sasayaki(args: argparse.Namespace) -> int:
+    library = Library()
+    try:
+        action = _normalize_sasayaki_action(args.action)
+    except ValueError:
+        if args.target is not None:
+            raise
+        args.target = args.action
+        action = "status"
+    record = _find_book_for_input(library, args.target)
+    if record is None:
+        raise ValueError("找不到这本书。Sasayaki 需要先把书导入书架。")
+
+    if action == "match":
+        if not args.path:
+            raise ValueError("匹配需要 SRT 路径：hoshi sasayaki match 书 SRT --audio 音频")
+        return _sasayaki_match(library, record, args.path, audio_path=args.audio, search_window=args.window)
+    if action == "audio":
+        audio_path = args.path or args.audio
+        if not audio_path:
+            raise ValueError("请提供音频文件路径。")
+        return _sasayaki_set_audio(library, record, audio_path)
+    if action == "list":
+        return _sasayaki_list(library, record, cue_index=args.cue)
+    if action == "play":
+        return _sasayaki_play(library, record, cue_index=args.cue, rate=args.rate, delay=args.delay)
+    return _sasayaki_status(library, record)
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     columns, rows = terminal_size()
     library = Library()
@@ -359,6 +413,193 @@ def cmd_update(args: argparse.Namespace) -> int:
 def check_update_message() -> str:
     info = check_for_updates(__version__)
     return format_update_info(info)
+
+
+SASAYAKI_ACTIONS = {
+    "status": "status",
+    "状态": "status",
+    "info": "status",
+    "list": "list",
+    "列表": "list",
+    "cue": "list",
+    "台词": "list",
+    "match": "match",
+    "匹配": "match",
+    "audio": "audio",
+    "音频": "audio",
+    "play": "play",
+    "播放": "play",
+}
+
+
+def _normalize_sasayaki_action(raw: str | None) -> str:
+    key = (raw or "status").strip().lower()
+    action = SASAYAKI_ACTIONS.get(key)
+    if not action:
+        raise ValueError("Sasayaki 操作应为 status/list/match/audio/play。")
+    return action
+
+
+def _sasayaki_match(
+    library: Library,
+    record: BookRecord,
+    srt_path: str | Path,
+    audio_path: str | Path | None = None,
+    search_window: int = 200,
+) -> int:
+    srt = Path(srt_path).expanduser().resolve()
+    if not srt.exists():
+        raise FileNotFoundError(srt)
+    audio = Path(audio_path).expanduser().resolve() if audio_path else None
+    if audio is not None and not audio.exists():
+        raise FileNotFoundError(audio)
+
+    extracted = extract_book(Path(record.stored_path))
+    cues = parse_srt(srt)
+    result = match_sasayaki(extracted, cues, search_window=max(0, search_window))
+    existing = library.sasayaki_for(record) or {}
+    playback = existing.get("playback", {}) if isinstance(existing.get("playback"), dict) else {}
+    data = {
+        "srt_path": str(srt),
+        "audio_path": str(audio) if audio else str(existing.get("audio_path", "")),
+        "search_window": max(0, search_window),
+        "match": result.to_dict(),
+        "playback": {
+            "lastPosition": float(playback.get("lastPosition", 0.0)),
+            "delay": float(playback.get("delay", 0.0)),
+            "rate": float(playback.get("rate", 1.0)),
+        },
+    }
+    library.set_sasayaki(record, data)
+    print(style("Sasayaki 匹配完成", GREEN), f"{record.title}: {match_rate_text(result)}")
+    if audio:
+        print(style("音频", DIM), audio)
+    return 0
+
+
+def _sasayaki_set_audio(library: Library, record: BookRecord, audio_path: str | Path) -> int:
+    audio = Path(audio_path).expanduser().resolve()
+    if not audio.exists():
+        raise FileNotFoundError(audio)
+    data = library.sasayaki_for(record) or {"playback": {"lastPosition": 0.0, "delay": 0.0, "rate": 1.0}}
+    data["audio_path"] = str(audio)
+    library.set_sasayaki(record, data)
+    print(style("Sasayaki 音频已保存", GREEN), audio)
+    return 0
+
+
+def _sasayaki_status(library: Library, record: BookRecord) -> int:
+    print(style("Sasayaki", BOLD), record.title)
+    data = library.sasayaki_for(record)
+    if not data:
+        print("还没有匹配。用 `hoshi sasayaki match 书 SRT --audio 音频`。")
+        return 0
+    match = _sasayaki_match_data(data)
+    playback = _sasayaki_playback(data)
+    print(f"SRT: {data.get('srt_path', '') or '未设置'}")
+    print(f"音频: {data.get('audio_path', '') or '未设置'}")
+    if match:
+        print(f"匹配率: {match_rate_text(match)}")
+        current = cue_at_time(match, float(playback.get("lastPosition", 0.0))) or (match.matches[0] if match.matches else None)
+        if current:
+            print("当前台词:")
+            _print_sasayaki_cue(current, 1 + match.matches.index(current))
+    else:
+        print("匹配数据: 未生成")
+    print(f"延迟: {float(playback.get('delay', 0.0)):.2f}s")
+    print(f"倍速: {float(playback.get('rate', 1.0)):.2f}x")
+    return 0
+
+
+def _sasayaki_list(library: Library, record: BookRecord, cue_index: int | None = None) -> int:
+    data = library.sasayaki_for(record)
+    match = _sasayaki_match_data(data)
+    if not match:
+        print("还没有 Sasayaki 匹配数据。")
+        return 0
+    print(style(f"Sasayaki 台词  {record.title}  {match_rate_text(match)}", BOLD))
+    if cue_index is not None:
+        cue = _sasayaki_cue_by_index(match, cue_index)
+        if cue is None:
+            raise ValueError("台词序号超出范围。")
+        _print_sasayaki_cue(cue, cue_index)
+        return 0
+    for index, cue in enumerate(match.matches[:30], start=1):
+        _print_sasayaki_cue(cue, index)
+    if len(match.matches) > 30:
+        print(style(f"... 还有 {len(match.matches) - 30} 条。用 --cue N 查看指定台词。", DIM))
+    return 0
+
+
+def _sasayaki_play(
+    library: Library,
+    record: BookRecord,
+    cue_index: int | None = None,
+    rate: float | None = None,
+    delay: float | None = None,
+) -> int:
+    data = library.sasayaki_for(record)
+    match = _sasayaki_match_data(data)
+    if not data or not match:
+        raise ValueError("还没有 Sasayaki 匹配数据。")
+    audio_path = str(data.get("audio_path", ""))
+    if not audio_path:
+        raise ValueError("还没有设置音频文件。")
+    playback = _sasayaki_playback(data)
+    if rate is not None:
+        playback["rate"] = max(0.1, float(rate))
+    if delay is not None:
+        playback["delay"] = float(delay)
+    cue = _sasayaki_cue_by_index(match, cue_index) if cue_index is not None else None
+    if cue is None:
+        cue = cue_at_time(match, float(playback.get("lastPosition", 0.0))) or (match.matches[0] if match.matches else None)
+    if cue is None:
+        raise ValueError("没有可播放的匹配台词。")
+
+    start_time = max(0.0, cue.start_time + float(playback.get("delay", 0.0)))
+    command, player = launch_audio(audio_path, start_time=start_time, rate=float(playback.get("rate", 1.0)))
+    playback["lastPosition"] = cue.start_time
+    data["playback"] = playback
+    library.set_sasayaki(record, data)
+    print(style("Sasayaki 播放", GREEN), f"{format_time(cue.start_time)}  {cue.text}")
+    if player in {"open", "start", "xdg-open"}:
+        print(style("提示", YELLOW), "系统默认播放器可能不会跳到指定时间；安装 mpv 或 ffplay 可按台词起点播放。")
+    print(style("播放器", DIM), player, " ".join(command))
+    return 0
+
+
+def _sasayaki_match_data(data: dict[str, object] | None) -> SasayakiMatchData | None:
+    if not data:
+        return None
+    raw_match = data.get("match")
+    if not isinstance(raw_match, dict):
+        return None
+    return SasayakiMatchData.from_dict(raw_match)
+
+
+def _sasayaki_playback(data: dict[str, object]) -> dict[str, object]:
+    playback = data.get("playback")
+    if not isinstance(playback, dict):
+        playback = {}
+    playback.setdefault("lastPosition", 0.0)
+    playback.setdefault("delay", 0.0)
+    playback.setdefault("rate", 1.0)
+    return playback
+
+
+def _sasayaki_cue_by_index(match: SasayakiMatchData, cue_index: int | None) -> SasayakiMatch | None:
+    if cue_index is None:
+        return None
+    if cue_index < 1 or cue_index > len(match.matches):
+        return None
+    return match.matches[cue_index - 1]
+
+
+def _print_sasayaki_cue(cue: SasayakiMatch, index: int) -> None:
+    print(
+        f"{index:>4}. {format_time(cue.start_time)} -> {format_time(cue.end_time)}  "
+        f"ch{cue.chapter_index + 1}:{cue.start}  {cue.text}"
+    )
 
 
 def _show_lookup(word: str, library: Library | None = None) -> None:
@@ -404,6 +645,53 @@ def _lookup_pager(word: str, results: object, library: Library) -> None:
                 _read_input(style("按 Enter 继续", DIM))
 
 
+def _reader_sasayaki_panel(library: Library, record: BookRecord | None, page: Page) -> None:
+    if record is None:
+        print("直接阅读文件时没有书架记录，无法使用 Sasayaki。")
+        _read_input(style("按 Enter 继续", DIM))
+        return
+    data = library.sasayaki_for(record)
+    match = _sasayaki_match_data(data)
+    if not data or not match:
+        print("这本书还没有 Sasayaki 匹配。先在 设置 -> 高级 -> Sasayaki 有声书 里匹配 SRT。")
+        _read_input(style("按 Enter 继续", DIM))
+        return
+    playback = _sasayaki_playback(data)
+    cue = (
+        find_cue_for_page(match, page.text)
+        or cue_at_time(match, float(playback.get("lastPosition", 0.0)))
+        or (match.matches[0] if match.matches else None)
+    )
+    if cue is None:
+        print("当前页面没有匹配到 Sasayaki 台词。")
+        _read_input(style("按 Enter 继续", DIM))
+        return
+
+    while True:
+        print(style("Sasayaki", BOLD), f"{match_rate_text(match)}")
+        cue_index = match.matches.index(cue) + 1
+        _print_sasayaki_cue(cue, cue_index)
+        print("1. 播放这一句")
+        print("2. 上一句")
+        print("3. 下一句")
+        print("0. 返回阅读")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            try:
+                _sasayaki_play(library, record, cue_index=cue_index)
+            except Exception as exc:
+                print(style(f"播放失败：{exc}", YELLOW))
+            _read_input(style("按 Enter 继续", DIM))
+        elif choice == "2":
+            cue = previous_cue(match, cue.start_time) or cue
+        elif choice == "3":
+            cue = next_cue(match, cue.start_time) or cue
+        elif choice in {"0", "q", "Q", "返回"}:
+            return
+        else:
+            print("没有这个 Sasayaki 选项。")
+
+
 def interactive_loop(
     title: str,
     text: str,
@@ -430,6 +718,8 @@ def interactive_loop(
             break
         elif command in {"r", "v"}:
             vertical = not vertical
+        elif command == "y":
+            _reader_sasayaki_panel(library, record, page)
         elif command.startswith("/"):
             word = command[1:].strip()
             if word:
@@ -1088,7 +1378,8 @@ def advanced_menu() -> int:
         print(f"2. {_ui('sync', library)}")
         print("3. AnkiConnect")
         print(f"4. {_ui('backup', library)}")
-        print(f"5. {_ui('check_update', library)}")
+        print(f"5. {_ui('sasayaki', library)}")
+        print(f"6. {_ui('check_update', library)}")
         print(f"0. {_ui('back', library)}")
         choice = _read_input(style(_ui("choose", library), CYAN)).strip()
         if choice == "1":
@@ -1100,12 +1391,102 @@ def advanced_menu() -> int:
         elif choice == "4":
             _advanced_backup()
         elif choice == "5":
+            _advanced_sasayaki()
+        elif choice == "6":
             _advanced_check_update()
         elif choice in {"0", "q", "Q", "返回", "back"}:
             return 0
         else:
             print("没有这个高级选项。")
             _pause()
+
+
+def _advanced_sasayaki() -> None:
+    library = Library()
+    books = _sorted_books(library)
+    if not books:
+        print("书架是空的。先导入一本 EPUB 或文本。")
+        _pause()
+        return
+    print(style("Sasayaki 有声书", BOLD))
+    _print_book_choices(books)
+    raw = _read_input("输入书籍序号或标题片段（留空最近一本）：").strip() or None
+    record = _find_book_for_input(library, raw)
+    if record is None:
+        print("找不到这本书。")
+        _pause()
+        return
+    while True:
+        print(clear_screen(), end="")
+        print(style("Sasayaki 有声书", BOLD), record.title)
+        _sasayaki_status(library, record)
+        print()
+        print("1. 匹配 SRT")
+        print("2. 设置音频文件")
+        print("3. 查看台词")
+        print("4. 播放台词")
+        print("5. 设置延迟")
+        print("6. 设置倍速")
+        print("0. 返回")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            srt = _read_input("SRT 路径：").strip().strip('"')
+            if srt:
+                audio = _read_input("音频路径（可留空）：").strip().strip('"') or None
+                window = _read_input("搜索窗口（默认 200）：").strip()
+                try:
+                    _sasayaki_match(library, record, srt, audio_path=audio, search_window=int(window) if window else 200)
+                except Exception as exc:
+                    print(style(f"匹配失败：{exc}", RED))
+                _pause()
+        elif choice == "2":
+            audio = _read_input("音频路径：").strip().strip('"')
+            if audio:
+                try:
+                    _sasayaki_set_audio(library, record, audio)
+                except Exception as exc:
+                    print(style(f"保存失败：{exc}", RED))
+                _pause()
+        elif choice == "3":
+            _sasayaki_list(library, record)
+            _pause()
+        elif choice == "4":
+            raw_cue = _read_input("台词序号（留空当前/第一句）：").strip()
+            try:
+                _sasayaki_play(library, record, cue_index=int(raw_cue) if raw_cue else None)
+            except Exception as exc:
+                print(style(f"播放失败：{exc}", RED))
+            _pause()
+        elif choice == "5":
+            raw_delay = _read_input("延迟秒数（可为负数）：").strip()
+            if raw_delay:
+                try:
+                    _sasayaki_playback_setting(library, record, "delay", float(raw_delay))
+                except Exception as exc:
+                    print(style(f"保存失败：{exc}", RED))
+                _pause()
+        elif choice == "6":
+            raw_rate = _read_input("倍速（例如 1.25）：").strip()
+            if raw_rate:
+                try:
+                    _sasayaki_playback_setting(library, record, "rate", max(0.1, float(raw_rate)))
+                except Exception as exc:
+                    print(style(f"保存失败：{exc}", RED))
+                _pause()
+        elif choice in {"0", "q", "Q", "返回"}:
+            return
+        else:
+            print("没有这个 Sasayaki 选项。")
+            _pause()
+
+
+def _sasayaki_playback_setting(library: Library, record: BookRecord, key: str, value: float) -> None:
+    data = library.sasayaki_for(record) or {}
+    playback = _sasayaki_playback(data)
+    playback[key] = value
+    data["playback"] = playback
+    library.set_sasayaki(record, data)
+    print(style("已保存", GREEN), f"{key}: {value}")
 
 
 def _advanced_sync() -> None:
@@ -1286,7 +1667,7 @@ def _read_reader_command(prompt: str = "") -> str:
     if command in {"right", "down", "left", "up", "space", ""}:
         print()
         return command
-    if command in {"r", "v", "s", "q"}:
+    if command in {"r", "v", "y", "s", "q"}:
         print(command)
         return command
     if command == "/":

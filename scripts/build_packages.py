@@ -12,7 +12,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 APP_NAME = "Hoshi-Reader-Terminal"
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 PACKAGE_BASE = f"{APP_NAME}-{VERSION}"
 
 
