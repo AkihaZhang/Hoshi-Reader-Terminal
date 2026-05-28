@@ -5,6 +5,9 @@ import unittest
 from hoshi_terminal.epub import Chapter, ExtractedBook
 from hoshi_terminal.sasayaki import (
     SasayakiCue,
+    SasayakiMatch,
+    SasayakiMatchData,
+    find_cue_for_page,
     filter_sasayaki_text,
     format_time,
     match_rate_text,
@@ -67,6 +70,20 @@ class SasayakiTests(unittest.TestCase):
         match = match_sasayaki(book, [SasayakiCue("0", 0.0, 1.0, "前半後半")], search_window=50)
         self.assertEqual(match.matches, [])
         self.assertEqual(match.unmatched, 1)
+
+    def test_find_cue_for_page_ignores_tiny_cues(self) -> None:
+        data = SasayakiMatchData(
+            matches=[
+                SasayakiMatch("short", 0.0, 0.2, "と", 0, 0, 1),
+                SasayakiMatch("real", 1.0, 3.0, "覚えていたいよ", 0, 10, 7),
+            ],
+            unmatched=0,
+        )
+
+        cue = find_cue_for_page(data, "返事のない背中に向けて、続ける。「覚えていたいよ」と。")
+
+        self.assertIsNotNone(cue)
+        self.assertEqual(cue.id, "real")
 
     def test_format_time(self) -> None:
         self.assertEqual(format_time(3723.456), "01:02:03.456")

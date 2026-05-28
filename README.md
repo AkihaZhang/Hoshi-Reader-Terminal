@@ -75,13 +75,13 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 
 ## Download
 
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.7). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.8). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.7-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.7-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.7-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.8-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.8-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.8-linux.tar.gz` |
 
 After installation, run:
 

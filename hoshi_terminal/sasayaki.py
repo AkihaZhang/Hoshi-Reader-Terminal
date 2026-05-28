@@ -210,11 +210,17 @@ def find_cue_for_page(data: SasayakiMatchData, page_text: str) -> SasayakiMatch 
     filtered_page = filter_sasayaki_text(page_text)
     if not filtered_page:
         return None
+    candidates: list[tuple[int, int, SasayakiMatch]] = []
     for cue in data.matches:
         cue_text = filter_sasayaki_text(cue.text)
-        if cue_text and cue_text in filtered_page:
-            return cue
-    return None
+        if len(cue_text) < 4:
+            continue
+        position = filtered_page.find(cue_text)
+        if position >= 0:
+            candidates.append((position, -len(cue_text), cue))
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
 def cue_at_time(data: SasayakiMatchData, seconds: float) -> SasayakiMatch | None:
