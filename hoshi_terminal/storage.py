@@ -13,6 +13,8 @@ import uuid
 
 from .epub import extract_book
 from .reader import character_count
+from .anki import DEFAULT_LAPIS_FIELD_MAPPINGS, DEFAULT_LAPIS_FIELD_ORDER
+from .audio import DEFAULT_LOCAL_AUDIO_PATH, default_audio_sources_json
 
 
 APP_NAME = "HoshiReaderTerminal"
@@ -103,12 +105,23 @@ class Library:
         raw.setdefault("book_path", str(Path.cwd()))
         raw.setdefault("sync_path", str(DEFAULT_SYNC_PATH))
         raw.setdefault("ankiconnect_url", "http://127.0.0.1:8765")
-        raw.setdefault("anki_deck", "Hoshi Reader Terminal")
-        raw.setdefault("anki_model", "Basic")
+        if raw.get("anki_template_version") != "lapis-v1":
+            if raw.get("anki_deck", "Hoshi Reader Terminal") == "Hoshi Reader Terminal":
+                raw["anki_deck"] = "Mining"
+            if raw.get("anki_model", "Basic") == "Basic":
+                raw["anki_model"] = "Lapis"
+            raw["anki_field_mappings"] = json.dumps(DEFAULT_LAPIS_FIELD_MAPPINGS, ensure_ascii=False)
+            raw["anki_template_version"] = "lapis-v1"
+        raw.setdefault("anki_deck", "Mining")
+        raw.setdefault("anki_model", "Lapis")
         raw.setdefault("anki_front_field", "Front")
         raw.setdefault("anki_back_field", "Back")
-        raw.setdefault("anki_tag", "hoshi-terminal")
+        raw.setdefault("anki_field_mappings", json.dumps(DEFAULT_LAPIS_FIELD_MAPPINGS, ensure_ascii=False))
+        raw.setdefault("anki_tag", "hoshi")
         raw.setdefault("anki_mode", "both")
+        raw.setdefault("audio_sources", default_audio_sources_json())
+        raw.setdefault("audio_enable_local", "false")
+        raw.setdefault("audio_local_db_path", str(self.root / DEFAULT_LOCAL_AUDIO_PATH))
         raw.setdefault("reader_vertical", "false")
         raw.setdefault("language", "zh")
         return {str(key): str(value) for key, value in raw.items()}
@@ -274,13 +287,37 @@ class Library:
         records[record.id] = data
         self._save_state()
 
-    def mine_card(self, word: str, sentence: str = "", note: str = "") -> Path:
-        exists = self.cards_file.exists()
-        with self.cards_file.open("a", encoding="utf-8", newline="") as handle:
+    def mine_card(self, word: str, sentence: str = "", note: str = "", fields: dict[str, str] | None = None) -> Path:
+        fields = fields or {
+            "Expression": word,
+            "MainDefinition": note,
+            "Sentence": sentence,
+            "IsWordAndSentenceCard": "x",
+        }
+        header = [field for field in DEFAULT_LAPIS_FIELD_ORDER if field in fields]
+        header += [field for field in fields if field not in header]
+        header += ["CreatedAt", "Source"]
+        target = self._card_csv_for_header(header)
+        exists = target.exists()
+        with target.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
             if not exists:
-                writer.writerow(["word", "sentence", "note", "created_at", "source"])
-            writer.writerow([word, sentence, note, _now(), "Hoshi Reader Terminal"])
+                writer.writerow(header)
+            writer.writerow([fields.get(field, "") for field in header[:-2]] + [_now(), "Hoshi Reader Terminal"])
+        return target
+
+    def _card_csv_for_header(self, header: list[str]) -> Path:
+        if not self.cards_file.exists():
+            return self.cards_file
+        try:
+            with self.cards_file.open("r", encoding="utf-8", newline="") as handle:
+                existing = next(csv.reader(handle), [])
+        except (OSError, StopIteration):
+            return self.cards_file
+        if existing == header:
+            return self.cards_file
+        if existing == ["word", "sentence", "note", "created_at", "source"]:
+            return self.cards_file.with_name("mined_cards_lapis.csv")
         return self.cards_file
 
     def _load_state(self) -> dict[str, object]:

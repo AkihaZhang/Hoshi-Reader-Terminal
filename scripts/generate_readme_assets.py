@@ -12,32 +12,29 @@ import textwrap
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT / "docs" / "images"
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+ASSET_BOOK = Path(os.environ.get("HOSHI_ASSET_BOOK", ROOT / "测试用" / "かがみの孤城 (辻村深月) (Z-Library).epub"))
+ASSET_SRT = Path(os.environ.get("HOSHI_ASSET_SRT", ROOT / "测试用" / "かがみの孤城 [audiobook.jp 244083].srt"))
+ASSET_AUDIO = Path(os.environ.get("HOSHI_ASSET_AUDIO", ROOT / "测试用" / "かがみの孤城 [audiobook.jp 244083].m4b"))
 
 
 def main() -> int:
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    for required in (ASSET_BOOK,):
+        if not required.exists():
+            raise FileNotFoundError(f"README asset source not found: {required}")
     with tempfile.TemporaryDirectory() as temp_dir:
         home = Path(temp_dir) / "home"
         sync = Path(temp_dir) / "sync"
-        demo = ROOT / "examples" / "demo_book.txt"
-        sasayaki_srt = Path(temp_dir) / "demo.srt"
-        sasayaki_srt.write_text(
-            "\n\n".join(
-                [
-                    "1\n00:00:01,000 --> 00:00:03,000\n端末で本を読むと、ページをめくる音はしない。",
-                    "2\n00:00:04,000 --> 00:00:06,000\nそのかわり、矢印キーで次のページへ進む。",
-                    "3\n00:00:07,000 --> 00:00:09,000\n辞書には「読む」という見出しが登録されていた。",
-                ]
-            ),
-            encoding="utf-8",
-        )
-        _run(["python3", "-m", "hoshi_terminal", "导入", str(demo)], home=home)
-        _run(["python3", "-m", "hoshi_terminal", "导入词典", str(ROOT / "examples" / "mini-yomitan")], home=home)
-        _run(["python3", "-m", "hoshi_terminal", "sasayaki", "match", "1", str(sasayaki_srt)], home=home)
-        _set_demo_progress(home)
+        _run(["python3", "-m", "hoshi_terminal", "导入", str(ASSET_BOOK)], home=home)
+        if ASSET_SRT.exists():
+            command = ["python3", "-m", "hoshi_terminal", "sasayaki", "match", "1", str(ASSET_SRT)]
+            if ASSET_AUDIO.exists():
+                command += ["--audio", str(ASSET_AUDIO)]
+            _run(command, home=home)
+        _set_asset_progress(home)
         sasayaki_status = _run(["python3", "-m", "hoshi_terminal", "sasayaki", "status", "1"], home=home)
-        sasayaki_status = sasayaki_status.replace(str(sasayaki_srt.resolve()), "examples/demo.srt")
-        sasayaki_status = sasayaki_status.replace(str(sasayaki_srt), "examples/demo.srt")
+        sasayaki_status = sasayaki_status.replace(str(ASSET_SRT.resolve()), "测试用/かがみの孤城.srt")
+        sasayaki_status = sasayaki_status.replace(str(ASSET_AUDIO.resolve()), "测试用/かがみの孤城.m4b")
 
         captures = {
             "01-menu.svg": _snippet(
@@ -53,8 +50,8 @@ def main() -> int:
                 """,
                 color=True,
             ),
-            "02-reader.svg": _run(["python3", "-m", "hoshi_terminal", "阅读", "demo", "--print", "--width", "72", "--lines", "15"], home=home),
-            "03-dictionary.svg": _run(["python3", "-m", "hoshi_terminal", "查词", "読みました"], home=home),
+            "02-reader.svg": _run(["python3", "-m", "hoshi_terminal", "阅读", "1", "--print", "--width", "72", "--lines", "15"], home=home),
+            "03-dictionary.svg": _run(["python3", "-m", "hoshi_terminal", "查词", "秋"]),
             "04-sync.svg": _run(["python3", "-m", "hoshi_terminal", "同步", "export", "--path", str(sync)], home=home),
             "05-settings.svg": _snippet(
                 """
@@ -117,7 +114,7 @@ def _snippet(code: str, color: bool = False) -> str:
     return _run(["python3", "-c", textwrap.dedent(code)], color=color)
 
 
-def _set_demo_progress(home: Path) -> None:
+def _set_asset_progress(home: Path) -> None:
     script = textwrap.dedent(
         """
         from hoshi_terminal.storage import Library

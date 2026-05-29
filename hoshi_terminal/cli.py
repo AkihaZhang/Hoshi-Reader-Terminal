@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -9,7 +10,20 @@ import time
 import zipfile
 
 from . import __version__
-from .anki import AnkiConnectError, add_note, settings_from_dict, version as ankiconnect_version
+from .anki import (
+    AnkiConnectError,
+    MiningPayload,
+    add_note,
+    csv_fields,
+    settings_from_dict,
+    version as ankiconnect_version,
+)
+from .audio import (
+    AudioSource,
+    audio_sources_from_settings,
+    default_audio_sources_json,
+    resolve_word_audio,
+)
 from .dictionary import (
     DICTIONARY_TYPES,
     TYPE_LABELS,
@@ -25,9 +39,13 @@ from .sasayaki import (
     SasayakiMatch,
     SasayakiMatchData,
     SasayakiPlayer,
+    cue_at_or_before_time,
     cue_at_time,
+    export_cue_audio,
     find_cue_for_page,
+    filter_sasayaki_text,
     format_time,
+    is_audio_url,
     launch_audio,
     match_rate_text,
     match_sasayaki,
@@ -103,17 +121,6 @@ ARGPARSE_TRANSLATIONS = {
 }
 
 
-DEMO_TEXT = """
-星読み端末版へようこそ。
-
-これは端末で EPUB やテキストを読むための小さなアプリです。横書きと簡易的な縦書き表示に対応しています。
-
-辞書を引くこともできます。活用形から基本形を推定して検索することがあります。
-
-今日の目標は読むことです。読んだ文字数と時間は統計に保存されます。
-""".strip()
-
-
 class GracefulExit(Exception):
     pass
 
@@ -147,11 +154,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     menu = subparsers.add_parser("menu", aliases=["菜单"], help="打开中文主菜单")
     menu.set_defaults(func=cmd_menu)
-
-    demo = subparsers.add_parser("demo", aliases=["演示"], help="打开内置演示书")
-    demo.add_argument("--print", action="store_true", dest="print_only", help="打印第一页后退出")
-    demo.add_argument("--vertical", action="store_true", help="用终端竖排显示")
-    demo.set_defaults(func=cmd_demo)
 
     import_cmd = subparsers.add_parser("import", aliases=["导入"], help="导入书籍到书架")
     import_cmd.add_argument("path", metavar="路径")
@@ -197,6 +199,9 @@ def build_parser() -> argparse.ArgumentParser:
     mine.add_argument("word", metavar="词")
     mine.add_argument("--sentence", default="", help="例句")
     mine.add_argument("--note", default="", help="备注")
+    mine.add_argument("--reading", default="", help="读音")
+    mine.add_argument("--sentence-audio", default="", help="句子音频文件")
+    mine.add_argument("--no-audio", action="store_true", help="制卡时不抓取词语音频")
     mine.set_defaults(func=cmd_mine)
 
     stats = subparsers.add_parser("stats", aliases=["统计"], help="显示阅读统计")
@@ -240,15 +245,6 @@ def cmd_menu(args: argparse.Namespace) -> int:
 
 def cmd_settings(args: argparse.Namespace) -> int:
     return settings_loop()
-
-
-def cmd_demo(args: argparse.Namespace) -> int:
-    print(banner())
-    pages = paginate(DEMO_TEXT, width=args.width if hasattr(args, "width") else None)
-    if args.print_only or not sys.stdin.isatty():
-        print(render_page("Hoshi Reader Terminal 演示", pages[0], len(pages), vertical=args.vertical))
-        return 0
-    return interactive_loop("Hoshi Reader Terminal 演示", DEMO_TEXT, pages, None, args.vertical)
 
 
 def cmd_import(args: argparse.Namespace) -> int:
@@ -337,7 +333,16 @@ def cmd_dict_toggle(args: argparse.Namespace) -> int:
 
 
 def cmd_mine(args: argparse.Namespace) -> int:
-    print(mine_word(args.word, sentence=args.sentence, note=args.note))
+    print(
+        mine_word(
+            args.word,
+            sentence=args.sentence,
+            note=args.note,
+            reading=args.reading,
+            sentence_audio_path=args.sentence_audio,
+            include_word_audio=not args.no_audio,
+        )
+    )
     return 0
 
 
@@ -466,9 +471,10 @@ def _sasayaki_match(
     srt = Path(srt_path).expanduser().resolve()
     if not srt.exists():
         raise FileNotFoundError(srt)
-    audio = Path(audio_path).expanduser().resolve() if audio_path else None
-    if audio is not None and not audio.exists():
-        raise FileNotFoundError(audio)
+    audio = str(audio_path) if audio_path and is_audio_url(str(audio_path)) else None
+    audio_file = Path(audio_path).expanduser().resolve() if audio_path and audio is None else None
+    if audio_file is not None and not audio_file.exists():
+        raise FileNotFoundError(audio_file)
 
     extracted = extract_book(Path(record.stored_path))
     cues = parse_srt(srt)
@@ -477,7 +483,7 @@ def _sasayaki_match(
     playback = existing.get("playback", {}) if isinstance(existing.get("playback"), dict) else {}
     data = {
         "srt_path": str(srt),
-        "audio_path": str(audio) if audio else str(existing.get("audio_path", "")),
+        "audio_path": audio or (str(audio_file) if audio_file else str(existing.get("audio_path", ""))),
         "search_window": max(0, search_window),
         "match": result.to_dict(),
         "playback": {
@@ -488,17 +494,21 @@ def _sasayaki_match(
     }
     library.set_sasayaki(record, data)
     print(style("Sasayaki 匹配完成", GREEN), f"{record.title}: {match_rate_text(result)}")
-    if audio:
-        print(style("音频", DIM), audio)
+    if audio or audio_file:
+        print(style("音频", DIM), audio or audio_file)
     return 0
 
 
 def _sasayaki_set_audio(library: Library, record: BookRecord, audio_path: str | Path) -> int:
-    audio = Path(audio_path).expanduser().resolve()
-    if not audio.exists():
-        raise FileNotFoundError(audio)
+    if is_audio_url(str(audio_path)):
+        audio = str(audio_path)
+    else:
+        audio_file = Path(audio_path).expanduser().resolve()
+        if not audio_file.exists():
+            raise FileNotFoundError(audio_file)
+        audio = str(audio_file)
     data = library.sasayaki_for(record) or {"playback": {"lastPosition": 0.0, "delay": 0.0, "rate": 1.0}}
-    data["audio_path"] = str(audio)
+    data["audio_path"] = audio
     library.set_sasayaki(record, data)
     print(style("Sasayaki 音频已保存", GREEN), audio)
     return 0
@@ -738,6 +748,7 @@ def _reader_sasayaki_current(
     record: BookRecord | None,
     page: Page,
     prefer_playback: bool = False,
+    player: SasayakiPlayer | None = None,
 ) -> tuple[dict[str, object], SasayakiMatchData, SasayakiMatch, int] | None:
     if record is None:
         return None
@@ -748,6 +759,13 @@ def _reader_sasayaki_current(
     playback = _sasayaki_playback(data)
     page_cue = find_cue_for_page(match, page.text)
     last_position = float(playback.get("lastPosition", 0.0))
+    live_position = player.current_time() if player is not None else None
+    if prefer_playback and live_position is not None:
+        delay = float(playback.get("delay", 0.0))
+        anchor = max(0.0, live_position - delay)
+        live_cue = cue_at_time(match, anchor) or cue_at_or_before_time(match, anchor)
+        if live_cue is not None:
+            return data, match, live_cue, match.matches.index(live_cue) + 1
     position_cue = cue_at_time(match, last_position) if last_position > 0 else None
     if prefer_playback and position_cue is not None:
         cue = position_cue
@@ -762,11 +780,17 @@ def _reader_sasayaki_play(
     page: Page,
     player: SasayakiPlayer,
     direction: str = "current",
-) -> None:
-    current = _reader_sasayaki_current(library, record, page, prefer_playback=direction != "current")
+) -> SasayakiMatch | None:
+    current = _reader_sasayaki_current(
+        library,
+        record,
+        page,
+        prefer_playback=direction != "current",
+        player=player,
+    )
     if current is None:
         _flash_message("这本书还没有 Sasayaki 匹配。")
-        return
+        return None
     _, match, cue, _ = current
     if direction == "next":
         cue = next_cue(match, cue.start_time) or cue
@@ -777,6 +801,8 @@ def _reader_sasayaki_play(
         _sasayaki_play(library, record, cue_index=cue_index, player_session=player, quiet=True)
     except Exception as exc:
         _flash_message(f"Sasayaki 播放失败：{exc}", seconds=0.9)
+        return None
+    return cue
 
 
 def _reader_sasayaki_toggle(
@@ -784,12 +810,113 @@ def _reader_sasayaki_toggle(
     record: BookRecord | None,
     page: Page,
     player: SasayakiPlayer,
-) -> None:
+) -> SasayakiMatch | None:
     if player.is_playing():
         player.toggle_pause()
         _flash_message("Sasayaki 已暂停" if player.paused else "Sasayaki 继续播放")
-        return
-    _reader_sasayaki_play(library, record, page, player)
+        return None
+    return _reader_sasayaki_play(library, record, page, player)
+
+
+def _reader_sasayaki_tick(
+    library: Library,
+    record: BookRecord | None,
+    player: SasayakiPlayer,
+    current_cue: SasayakiMatch | None,
+) -> SasayakiMatch | None:
+    if record is None or not player.is_playing() or player.paused:
+        return None
+    data = library.sasayaki_for(record)
+    match = _sasayaki_match_data(data)
+    if not data or not match:
+        return None
+    position = player.current_time()
+    if position is None:
+        return None
+    playback = _sasayaki_playback(data)
+    cue_time = max(0.0, position - float(playback.get("delay", 0.0)))
+    cue = cue_at_time(match, cue_time) or cue_at_or_before_time(match, cue_time)
+    if cue is None or cue.id == (current_cue.id if current_cue else None):
+        return None
+    playback["lastPosition"] = cue.start_time
+    data["playback"] = playback
+    library.set_sasayaki(record, data)
+    return cue
+
+
+def _reader_sentence_audio(
+    library: Library,
+    record: BookRecord | None,
+    page: Page,
+    sentence: str,
+    current_cue: SasayakiMatch | None,
+) -> Path | None:
+    if record is None:
+        return None
+    data = library.sasayaki_for(record)
+    match = _sasayaki_match_data(data)
+    if not data or not match:
+        return None
+    audio_path = str(data.get("audio_path", ""))
+    if not audio_path:
+        return None
+    playback = _sasayaki_playback(data)
+    cue = current_cue or find_cue_for_page(match, page.text) or cue_at_time(match, float(playback.get("lastPosition", 0.0)))
+    if cue is None:
+        return None
+    return export_cue_audio(
+        audio_path,
+        data=match,
+        cue=cue,
+        sentence=sentence,
+        output_dir=library.root / "anki-media" / "sasayaki",
+        delay=float(playback.get("delay", 0.0)),
+    )
+
+
+def _sasayaki_chapter_offsets(record: BookRecord | None) -> list[int]:
+    if record is None:
+        return []
+    try:
+        chapters = extract_book(Path(record.stored_path)).chapters
+    except Exception:
+        return []
+    offsets: list[int] = []
+    cursor = 0
+    for chapter in chapters:
+        offsets.append(cursor)
+        cursor += len(chapter.text) + 2
+    return offsets
+
+
+def _page_index_for_cue(
+    pages: list[Page],
+    cue: SasayakiMatch,
+    chapter_offsets: list[int],
+    current_index: int,
+) -> int:
+    cue_text = filter_sasayaki_text(cue.text)
+    if cue_text and cue_text in filter_sasayaki_text(pages[current_index].text):
+        return current_index
+    if cue_text:
+        for index, page in enumerate(pages):
+            if cue_text in filter_sasayaki_text(page.text):
+                return index
+    if cue.chapter_index < len(chapter_offsets):
+        position = chapter_offsets[cue.chapter_index] + cue.start
+        for page in pages:
+            if page.start_char <= position <= page.end_char:
+                return page.index
+    return current_index
+
+
+def _reader_sasayaki_status_text(cue: SasayakiMatch | None, match: SasayakiMatchData | None = None) -> str | None:
+    if cue is None:
+        return None
+    prefix = ""
+    if match is not None and cue in match.matches:
+        prefix = f"{match.matches.index(cue) + 1}/{len(match.matches)} "
+    return f"{prefix}{format_time(cue.start_time)}  {cue.text}"
 
 
 def _flash_message(message: str, seconds: float = 0.45) -> None:
@@ -810,23 +937,56 @@ def interactive_loop(
     session_started = time.monotonic()
     session_start_char = pages[start_page].start_char if pages else 0
     sasayaki_player = SasayakiPlayer()
+    chapter_offsets = _sasayaki_chapter_offsets(record)
+    current_cue: SasayakiMatch | None = None
 
     try:
         while True:
             page = pages[page_index]
+            current_match = None
+            if record is not None:
+                current_match = _sasayaki_match_data(library.sasayaki_for(record))
             print(clear_screen(), end="")
-            print(render_page(title, page, len(pages), vertical=vertical))
-            command = _read_reader_command(style("hoshi> ", CYAN)).strip()
+            print(
+                render_page(
+                    title,
+                    page,
+                    len(pages),
+                    vertical=vertical,
+                    highlight=current_cue.text if current_cue else None,
+                    sasayaki_status=_reader_sasayaki_status_text(current_cue, current_match),
+                )
+            )
+            command = _read_reader_command(style("hoshi> ", CYAN), timeout=0.35)
+            tick_cue = _reader_sasayaki_tick(library, record, sasayaki_player, current_cue)
+            if tick_cue is not None:
+                current_cue = tick_cue
+                page_index = _page_index_for_cue(pages, tick_cue, chapter_offsets, page_index)
+                if command is None:
+                    continue
+                page = pages[page_index]
+            if command is None:
+                continue
+            command = command.strip()
             if command == "right":
                 page_index = min(len(pages) - 1, page_index + 1)
             elif command == "left":
                 page_index = max(0, page_index - 1)
             elif command == "down":
-                _reader_sasayaki_play(library, record, page, sasayaki_player, direction="next")
+                cue = _reader_sasayaki_play(library, record, page, sasayaki_player, direction="next")
+                if cue is not None:
+                    current_cue = cue
+                    page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
             elif command == "up":
-                _reader_sasayaki_play(library, record, page, sasayaki_player, direction="previous")
+                cue = _reader_sasayaki_play(library, record, page, sasayaki_player, direction="previous")
+                if cue is not None:
+                    current_cue = cue
+                    page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
             elif command in {"", "space"}:
-                _reader_sasayaki_toggle(library, record, page, sasayaki_player)
+                cue = _reader_sasayaki_toggle(library, record, page, sasayaki_player)
+                if cue is not None:
+                    current_cue = cue
+                    page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
             elif command in {"q", "quit", "exit"}:
                 break
             elif command in {"r", "v"}:
@@ -840,8 +1000,15 @@ def interactive_loop(
             elif command.startswith("a "):
                 word = command[2:].strip()
                 sentence = sentence_around(page.text, word)
-                card_path = library.mine_card(word, sentence=sentence)
-                print(style("已制卡", MAGENTA), f"{word} -> {card_path}")
+                sentence_audio = _reader_sentence_audio(library, record, page, sentence, current_cue)
+                print(
+                    mine_word(
+                        word,
+                        sentence=sentence,
+                        sentence_audio_path=str(sentence_audio or ""),
+                        document_title=record.title if record else title,
+                    )
+                )
                 _read_input(style("按 Enter 继续", DIM))
             elif command.startswith("h"):
                 note = command[1:].strip()
@@ -956,13 +1123,6 @@ def dictionary_menu() -> int:
         else:
             print("没有这个查词选项。")
             _pause()
-
-
-def _menu_demo() -> None:
-    pages = paginate(DEMO_TEXT)
-    vertical = Library().settings["reader_vertical"] == "true"
-    interactive_loop("Hoshi Reader Terminal 演示", DEMO_TEXT, pages, None, vertical)
-    _pause("已回到主菜单。按 Enter 继续")
 
 
 def _menu_import_book() -> None:
@@ -1373,6 +1533,7 @@ def _settings_anki() -> None:
         print("3. 修改牌组")
         print("4. 修改模板")
         print("5. 修改字段")
+        print("6. 词语音频")
         print("0. 返回")
         choice = _read_input(style("请选择：", CYAN)).strip()
         if choice == "1":
@@ -1386,6 +1547,8 @@ def _settings_anki() -> None:
         elif choice == "5":
             _menu_set_raw_setting("anki_front_field", "正面字段")
             _menu_set_raw_setting("anki_back_field", "背面字段")
+        elif choice == "6":
+            _settings_audio()
         elif choice in {"0", "q", "Q", "返回"}:
             return
         else:
@@ -1439,6 +1602,53 @@ def _settings_ankiconnect() -> None:
         else:
             print(style("连接成功", GREEN), f"AnkiConnect v{connected_version}")
         _pause()
+
+
+def _settings_audio() -> None:
+    while True:
+        library = Library()
+        settings = library.settings
+        sources = audio_sources_from_settings(settings)
+        print(clear_screen(), end="")
+        print(style("词语音频", BOLD))
+        print(f"本地音频: {'开' if settings.get('audio_enable_local') == 'true' else '关'}")
+        print(f"本地数据库: {settings.get('audio_local_db_path', '')}")
+        print("音频源:")
+        for index, source in enumerate(sources, start=1):
+            state = "开" if source.enabled else "关"
+            print(f"{index}. [{state}] {source.name}  {source.url}")
+        print()
+        print("1. 启用/停用本地音频")
+        print("2. 设置本地 android.db")
+        print("3. 添加在线音频源")
+        print("4. 启用/停用在线源")
+        print("5. 恢复 Android 默认在线源")
+        print("0. 返回")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            library.set_setting("audio_enable_local", "false" if settings.get("audio_enable_local") == "true" else "true")
+        elif choice == "2":
+            _menu_set_path("audio_local_db_path", "本地音频数据库")
+        elif choice == "3":
+            name = _read_input("名称：").strip()
+            url = _read_input("URL 模板（支持 {term} 和 {reading}）：").strip()
+            if name and url:
+                next_sources = [source.to_dict() for source in sources]
+                next_sources.append(AudioSource(name=name, url=url, enabled=True).to_dict())
+                library.set_setting("audio_sources", json.dumps(next_sources, ensure_ascii=False))
+        elif choice == "4":
+            raw = _read_input("输入源序号：").strip()
+            if raw.isdigit() and 1 <= int(raw) <= len(sources):
+                index = int(raw) - 1
+                next_sources = []
+                for source_index, source in enumerate(sources):
+                    enabled = not source.enabled if source_index == index else source.enabled
+                    next_sources.append(AudioSource(source.name, source.url, enabled, source.is_default).to_dict())
+                library.set_setting("audio_sources", json.dumps(next_sources, ensure_ascii=False))
+        elif choice == "5":
+            library.set_setting("audio_sources", default_audio_sources_json())
+        elif choice in {"0", "q", "Q", "返回"}:
+            return
 
 
 def _settings_appearance() -> None:
@@ -1682,18 +1892,53 @@ def _menu_set_raw_setting(key: str, label: str) -> None:
     _pause()
 
 
-def mine_word(word: str, sentence: str = "", note: str = "") -> str:
+def mine_word(
+    word: str,
+    sentence: str = "",
+    note: str = "",
+    reading: str = "",
+    sentence_audio_path: str = "",
+    document_title: str = "",
+    include_word_audio: bool = True,
+) -> str:
     library = Library()
     settings = library.settings
     anki = settings_from_dict(settings)
+    word_audio = resolve_word_audio(word, reading, settings, library.root) if include_word_audio else None
+    payload = MiningPayload(
+        expression=word,
+        sentence=sentence,
+        note=note,
+        reading=reading,
+        matched=word,
+        glossary_first=note,
+        glossary=note,
+        selection_text=word,
+        document_title=document_title,
+        word_audio=word_audio,
+        sentence_audio_path=sentence_audio_path,
+    )
+    fields = csv_fields(payload)
     outputs: list[str] = []
     csv_path = None
     if anki.mode in {"csv", "both"}:
-        csv_path = library.mine_card(word, sentence=sentence, note=note)
+        csv_path = library.mine_card(word, sentence=sentence, note=note, fields=fields)
         outputs.append(f"CSV: {csv_path}")
     if anki.mode in {"ankiconnect", "both"}:
         try:
-            note_id = add_note(anki, word, sentence=sentence, note=note)
+            note_id = add_note(
+                anki,
+                word,
+                sentence=sentence,
+                note=note,
+                reading=reading,
+                glossary=note,
+                glossary_first=note,
+                word_audio=word_audio,
+                sentence_audio_path=sentence_audio_path,
+                document_title=document_title,
+                matched=word,
+            )
         except AnkiConnectError as exc:
             if anki.mode == "ankiconnect":
                 outputs.append(f"AnkiConnect 失败: {exc}")
@@ -1702,8 +1947,12 @@ def mine_word(word: str, sentence: str = "", note: str = "") -> str:
         else:
             outputs.append(f"AnkiConnect: 已添加 note {note_id}")
     if not outputs:
-        csv_path = library.mine_card(word, sentence=sentence, note=note)
+        csv_path = library.mine_card(word, sentence=sentence, note=note, fields=fields)
         outputs.append(f"CSV: {csv_path}")
+    if word_audio is not None:
+        outputs.append(f"词语音频: {word_audio.source}")
+    if sentence_audio_path:
+        outputs.append("句子音频: Sasayaki")
     return style("已制卡", MAGENTA) + " " + f"{word} -> " + " | ".join(outputs)
 
 
@@ -1773,11 +2022,15 @@ def _read_input(prompt: str = "") -> str:
         raise GracefulExit from exc
 
 
-def _read_reader_command(prompt: str = "") -> str:
+def _read_reader_command(prompt: str = "", timeout: float | None = None) -> str | None:
     if not sys.stdin.isatty():
         return _read_input(prompt)
     print(prompt, end="", flush=True)
-    key = _read_single_key()
+    key = _read_single_key(timeout=timeout)
+    if key is None:
+        if prompt:
+            print("\r\033[K", end="", flush=True)
+        return None
     command = _normalize_reader_key(key)
     if command in {"right", "down", "left", "up", "space", ""}:
         print()
@@ -1821,9 +2074,15 @@ def _normalize_reader_key(key: str) -> str:
     return key
 
 
-def _read_single_key() -> str:
+def _read_single_key(timeout: float | None = None) -> str | None:
     if os.name == "nt":
         import msvcrt
+        if timeout is not None:
+            deadline = time.monotonic() + timeout
+            while not msvcrt.kbhit():
+                if time.monotonic() >= deadline:
+                    return None
+                time.sleep(0.03)
 
         first = msvcrt.getwch()
         if first in {"\x00", "\xe0"}:
@@ -1838,6 +2097,8 @@ def _read_single_key() -> str:
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
+        if timeout is not None and not select.select([fd], [], [], timeout)[0]:
+            return None
         data = os.read(fd, 1)
         if data == b"\x1b":
             for _ in range(5):

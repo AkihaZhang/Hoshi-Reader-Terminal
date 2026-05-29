@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
+import hashlib
 import json
 import os
 import platform
@@ -234,6 +235,15 @@ def cue_at_time(data: SasayakiMatchData, seconds: float) -> SasayakiMatch | None
     return None
 
 
+def cue_at_or_before_time(data: SasayakiMatchData, seconds: float) -> SasayakiMatch | None:
+    current: SasayakiMatch | None = None
+    for cue in data.matches:
+        if cue.start_time > seconds + 0.01:
+            break
+        current = cue
+    return current
+
+
 def next_cue(data: SasayakiMatchData, after: float) -> SasayakiMatch | None:
     for cue in data.matches:
         if cue.start_time > after + 0.01:
@@ -264,6 +274,11 @@ class SasayakiPlayer:
         self.player_name = ""
         self.ipc_path: Path | None = None
         self.paused = False
+        self.base_position = 0.0
+        self.rate = 1.0
+        self.started_at = 0.0
+        self.paused_at: float | None = None
+        self.paused_total = 0.0
 
     def play(
         self,
@@ -280,6 +295,11 @@ class SasayakiPlayer:
             command.insert(-1, f"--input-ipc-server={self.ipc_path}")
         self.process = _open_audio_process(command, player)
         self.paused = False
+        self.base_position = max(0.0, start_time)
+        self.rate = max(0.1, rate)
+        self.started_at = time.monotonic()
+        self.paused_at = None
+        self.paused_total = 0.0
         return command, player
 
     def is_playing(self) -> bool:
@@ -295,15 +315,50 @@ class SasayakiPlayer:
                 pass
             else:
                 self.paused = not self.paused
+                now = time.monotonic()
+                if self.paused:
+                    self.paused_at = now
+                elif self.paused_at is not None:
+                    self.paused_total += now - self.paused_at
+                    self.paused_at = None
                 return True
         self.stop()
         self.paused = True
+        return True
+
+    def current_time(self) -> float | None:
+        if not self.is_playing():
+            return None
+        if self.player_name == "mpv" and self.ipc_path is not None:
+            try:
+                value = _query_mpv(self.ipc_path, ["get_property", "time-pos"])
+            except OSError:
+                value = None
+            if isinstance(value, (int, float)):
+                return float(value)
+        now = self.paused_at if self.paused and self.paused_at is not None else time.monotonic()
+        elapsed = max(0.0, now - self.started_at - self.paused_total)
+        return self.base_position + elapsed * self.rate
+
+    def seek(self, seconds: float) -> bool:
+        if not self.is_playing() or self.player_name != "mpv" or self.ipc_path is None:
+            return False
+        try:
+            _send_mpv_command(self.ipc_path, ["set_property", "time-pos", max(0.0, seconds)])
+        except OSError:
+            return False
+        self.paused = False
+        self.base_position = max(0.0, seconds)
+        self.started_at = time.monotonic()
+        self.paused_at = None
+        self.paused_total = 0.0
         return True
 
     def stop(self, timeout: float = 0.3) -> None:
         process = self.process
         self.process = None
         self.paused = False
+        self.paused_at = None
         if process is None or process.poll() is not None:
             self._cleanup_ipc()
             return
@@ -331,7 +386,7 @@ def audio_command(
     rate: float = 1.0,
     duration: float | None = None,
 ) -> tuple[list[str], str]:
-    path = str(Path(audio_path).expanduser())
+    path = str(audio_path) if is_audio_url(str(audio_path)) else str(Path(audio_path).expanduser())
     start = max(0.0, start_time)
     speed = max(0.1, rate)
     length = max(0.05, duration) if duration is not None else None
@@ -385,6 +440,84 @@ def ffplay_atempo_filter(rate: float) -> str:
     return ",".join(filters)
 
 
+def is_audio_url(value: str) -> bool:
+    return value.startswith(("http://", "https://"))
+
+
+def resolve_cue_audio_range(
+    data: SasayakiMatchData,
+    cue: SasayakiMatch,
+    sentence: str,
+    delay: float = 0.0,
+) -> tuple[float, float]:
+    chapter_cues = [item for item in data.matches if item.chapter_index == cue.chapter_index]
+    try:
+        index = next(index for index, item in enumerate(chapter_cues) if item.id == cue.id)
+    except StopIteration:
+        return max(0.0, cue.start_time + delay), max(0.0, cue.end_time + delay)
+    start = index
+    end = index
+    filtered_sentence = filter_sasayaki_text(sentence)
+    while start > 0:
+        previous_text = filter_sasayaki_text(chapter_cues[start - 1].text)
+        if not previous_text or previous_text not in filtered_sentence:
+            break
+        start -= 1
+    while end + 1 < len(chapter_cues):
+        next_text = filter_sasayaki_text(chapter_cues[end + 1].text)
+        if not next_text or next_text not in filtered_sentence:
+            break
+        end += 1
+    start_time = max(0.0, chapter_cues[start].start_time + delay)
+    end_time = max(start_time + 0.05, chapter_cues[end].end_time + delay)
+    return start_time, end_time
+
+
+def export_cue_audio(
+    audio_path: str | Path,
+    data: SasayakiMatchData,
+    cue: SasayakiMatch,
+    sentence: str,
+    output_dir: str | Path,
+    delay: float = 0.0,
+) -> Path | None:
+    if is_audio_url(str(audio_path)):
+        return None
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    source = Path(audio_path).expanduser()
+    if not source.is_file():
+        return None
+    output_root = Path(output_dir).expanduser()
+    output_root.mkdir(parents=True, exist_ok=True)
+    start_time, end_time = resolve_cue_audio_range(data, cue, sentence, delay=delay)
+    digest = hashlib.sha1(f"{source}:{cue.id}:{start_time:.3f}:{end_time:.3f}".encode("utf-8")).hexdigest()[:16]
+    output = output_root / f"hoshi_sasayaki_{digest}.mp3"
+    command = [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{start_time:.3f}",
+        "-to",
+        f"{end_time:.3f}",
+        "-i",
+        str(source),
+        "-vn",
+        "-q:a",
+        "4",
+        str(output),
+    ]
+    result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    if result.returncode == 0 and output.is_file() and output.stat().st_size > 0:
+        return output
+    output.unlink(missing_ok=True)
+    return None
+
+
 def _open_audio_process(command: list[str], player: str) -> subprocess.Popen[bytes] | None:
     if player in {"open", "start", "xdg-open"}:
         subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
@@ -393,17 +526,46 @@ def _open_audio_process(command: list[str], player: str) -> subprocess.Popen[byt
 
 
 def _send_mpv_command(ipc_path: Path, command: list[object]) -> None:
-    payload = json.dumps({"command": command}).encode("utf-8") + b"\n"
+    _mpv_request(ipc_path, command, expect_response=False)
+
+
+def _query_mpv(ipc_path: Path, command: list[object]) -> object:
+    response = _mpv_request(ipc_path, command, expect_response=True)
+    if isinstance(response, dict):
+        return response.get("data")
+    return None
+
+
+def _mpv_request(ipc_path: Path, command: list[object], expect_response: bool) -> object:
+    request_id = int(time.monotonic() * 1000000)
+    payload = json.dumps({"command": command, "request_id": request_id}).encode("utf-8") + b"\n"
     deadline = time.monotonic() + 0.5
     last_error: OSError | None = None
     while time.monotonic() < deadline:
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(max(0.05, deadline - time.monotonic()))
                 client.connect(str(ipc_path))
                 client.sendall(payload)
-                return
+                if not expect_response:
+                    return None
+                raw = b""
+                while time.monotonic() < deadline:
+                    chunk = client.recv(4096)
+                    if not chunk:
+                        break
+                    raw += chunk
+                    while b"\n" in raw:
+                        line, raw = raw.split(b"\n", 1)
+                        if not line:
+                            continue
+                        response = json.loads(line.decode("utf-8"))
+                        if response.get("request_id") == request_id:
+                            return response
+                return None
         except OSError as exc:
             last_error = exc
             time.sleep(0.03)
     if last_error is not None:
         raise last_error
+    return None

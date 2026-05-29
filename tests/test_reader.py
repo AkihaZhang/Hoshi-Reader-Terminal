@@ -1,8 +1,10 @@
 import unittest
+import os
 
 from hoshi_terminal.reader import (
     Page,
     character_count,
+    highlight_sentence,
     paginate,
     render_page,
     render_vertical,
@@ -31,7 +33,7 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(vertical_cell("。"), "｡ ")
 
     def test_reader_footer_splits_page_and_sasayaki_arrows(self) -> None:
-        rendered = render_page("demo", Page(0, 0, 1, "本文"), 2)
+        rendered = render_page("book", Page(0, 0, 1, "本文"), 2)
         self.assertIn("←/→ 翻页", rendered)
         self.assertIn("↑/↓ Sasayaki", rendered)
         self.assertIn("Enter/Space 播放/暂停", rendered)
@@ -40,6 +42,37 @@ class ReaderTests(unittest.TestCase):
         self.assertNotIn("Enter/n", rendered)
         self.assertNotIn("p 上一页", rendered)
         self.assertNotIn("v 纵书", rendered)
+
+    def test_reader_highlights_sasayaki_sentence_in_plain_text(self) -> None:
+        previous = os.environ.get("FORCE_COLOR")
+        previous_no_color = os.environ.get("NO_COLOR")
+        previous_term = os.environ.get("TERM")
+        os.environ["FORCE_COLOR"] = "1"
+        os.environ.pop("NO_COLOR", None)
+        os.environ["TERM"] = "xterm-256color"
+        try:
+            rendered = highlight_sentence("私は星を読んだ。", "星を読んだ")
+        finally:
+            if previous is None:
+                os.environ.pop("FORCE_COLOR", None)
+            else:
+                os.environ["FORCE_COLOR"] = previous
+            if previous_no_color is None:
+                os.environ.pop("NO_COLOR", None)
+            else:
+                os.environ["NO_COLOR"] = previous_no_color
+            if previous_term is None:
+                os.environ.pop("TERM", None)
+            else:
+                os.environ["TERM"] = previous_term
+
+        self.assertIn("星を読んだ", rendered)
+        self.assertNotEqual(rendered, "私は星を読んだ。")
+
+    def test_reader_highlights_filtered_sasayaki_sentence(self) -> None:
+        rendered = highlight_sentence("私は「星」を、読んだ。", "星を読んだ")
+
+        self.assertIn("「星」を、読んだ", rendered)
 
     def test_sentence_around(self) -> None:
         text = "前の文。端末で読むと楽しい。次の文。"

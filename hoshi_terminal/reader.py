@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import re
 import unicodedata
 
+from .sasayaki import filter_sasayaki_text
 from .terminal import BOLD, CYAN, DIM, GREEN, style, terminal_size, wrap_paragraphs
 
 
@@ -77,17 +78,54 @@ def page_for_position(pages: list[Page], position: int) -> int:
     return 0
 
 
-def render_page(title: str, page: Page, total_pages: int, vertical: bool = False) -> str:
+def render_page(
+    title: str,
+    page: Page,
+    total_pages: int,
+    vertical: bool = False,
+    highlight: str | None = None,
+    sasayaki_status: str | None = None,
+) -> str:
     header = style(title, BOLD) + style(f"  第 {page.index + 1}/{total_pages} 页", DIM)
     ruler = style("─" * min(96, max(24, len(header))), CYAN)
-    content = render_vertical(page.text) if vertical else page.text
+    page_text = highlight_sentence(page.text, highlight) if highlight else page.text
+    content = render_vertical(page_text) if vertical else page_text
+    status = [style(f"Sasayaki: {sasayaki_status}", CYAN)] if sasayaki_status else []
     footer = "\n".join(
         [
             style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放/暂停    r 排版    y 详情    q 退出", DIM),
             style("输入 /読みました 查词    输入 a 読む 制卡    输入 h 备注内容 划线", DIM),
         ]
     )
-    return "\n".join([header, ruler, content, ruler, footer])
+    return "\n".join([header, ruler, content, *status, ruler, footer])
+
+
+def highlight_sentence(text: str, highlight: str | None) -> str:
+    if not highlight:
+        return text
+    if highlight in text:
+        return text.replace(highlight, style(highlight, BOLD + CYAN), 1)
+    filtered_text, positions = _filtered_with_positions(text)
+    filtered_highlight = filter_sasayaki_text(highlight)
+    if not filtered_text or not filtered_highlight:
+        return text
+    index = filtered_text.find(filtered_highlight)
+    if index < 0:
+        return text
+    start = positions[index]
+    end = positions[index + len(filtered_highlight) - 1] + 1
+    return text[:start] + style(text[start:end], BOLD + CYAN) + text[end:]
+
+
+def _filtered_with_positions(text: str) -> tuple[str, list[int]]:
+    chars: list[str] = []
+    positions: list[int] = []
+    for index, char in enumerate(text):
+        filtered = filter_sasayaki_text(char)
+        for item in filtered:
+            chars.append(item)
+            positions.append(index)
+    return "".join(chars), positions
 
 
 def render_vertical(text: str, rows: int | None = None) -> str:

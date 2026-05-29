@@ -12,7 +12,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 APP_NAME = "Hoshi-Reader-Terminal"
-VERSION = "0.1.11"
+VERSION = "0.1.12"
 PACKAGE_BASE = f"{APP_NAME}-{VERSION}"
 
 
@@ -102,11 +102,10 @@ README_TXT = """Hoshi Reader Terminal 便携包
 hoshi
 
 常用命令：
-hoshi 演示
-hoshi 导入 examples/demo_book.txt
+hoshi 导入 /path/to/book.epub
 hoshi 书架
-hoshi 阅读 demo
-hoshi 导入词典 examples/mini-yomitan
+hoshi 阅读 1
+hoshi 导入词典 /path/to/yomitan-dictionaries
 hoshi 查词 読みました
 hoshi 同步 export
 """
@@ -195,7 +194,6 @@ def _common_payload(folder: Path, pyz: Path) -> None:
     shutil.copy2(ROOT / "README.md", folder / "README.md")
     shutil.copy2(ROOT / "README.zh-CN.md", folder / "README.zh-CN.md")
     shutil.copy2(ROOT / "LICENSE", folder / "LICENSE")
-    shutil.copytree(ROOT / "examples", folder / "examples")
     _write_text(folder / "INSTALL.zh-CN.txt", README_TXT)
 
 

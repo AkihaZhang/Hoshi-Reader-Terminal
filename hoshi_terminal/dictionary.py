@@ -12,34 +12,6 @@ import textwrap
 import zipfile
 
 
-BUILTIN_ENTRIES = [
-    {
-        "term": "星",
-        "reading": "ほし",
-        "definitions": ["星；夜空中发光的天体。"],
-        "dictionary": "内置辞书",
-    },
-    {
-        "term": "読む",
-        "reading": "よむ",
-        "definitions": ["読む；阅读，朗读，理解文字内容。"],
-        "dictionary": "内置辞书",
-    },
-    {
-        "term": "端末",
-        "reading": "たんまつ",
-        "definitions": ["终端；用于输入命令并显示输出的环境。"],
-        "dictionary": "内置辞书",
-    },
-    {
-        "term": "辞書",
-        "reading": "じしょ",
-        "definitions": ["辞书；按词条说明词义、读音或用法的资料。"],
-        "dictionary": "内置辞书",
-    },
-]
-
-
 DICTIONARY_TYPES = ("term", "frequency", "pitch")
 IMPORT_CHUNK_SIZE = 10_000
 TYPE_LABELS = {
@@ -133,30 +105,6 @@ class DictionaryManager:
                             note="" if note == "exact" else note,
                             definition_tags=_split_tags(str(row["definition_tags"] or "")),
                             term_tags=_split_tags(str(row["term_tags"] or "")),
-                            frequencies=self._lookup_frequency_rows(db, term, reading),
-                            pitches=self._lookup_pitch_rows(db, term, reading),
-                        )
-                    )
-                    if len(results) >= limit:
-                        return results
-
-                for entry in BUILTIN_ENTRIES:
-                    if entry["term"] != candidate and entry.get("reading", "") != candidate:
-                        continue
-                    key = (str(entry["term"]), str(entry.get("reading", "")), str(entry.get("dictionary", "")))
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    term = str(entry["term"])
-                    reading = str(entry.get("reading", ""))
-                    results.append(
-                        LookupResult(
-                            term=term,
-                            reading=reading,
-                            definitions=[str(item) for item in entry.get("definitions", [])],
-                            dictionary=str(entry.get("dictionary", "内置辞书")),
-                            matched=candidate,
-                            note="" if note == "exact" else note,
                             frequencies=self._lookup_frequency_rows(db, term, reading),
                             pitches=self._lookup_pitch_rows(db, term, reading),
                         )

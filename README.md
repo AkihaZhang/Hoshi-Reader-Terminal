@@ -51,8 +51,9 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 ### Sasayaki Audiobooks
 
 - Ports the core upstream Sasayaki flow: parse SubPlz `.srt` files, filter book text, match cues in reading order, and report a match rate.
-- Save each book's SRT path, audio file, playback position, delay, and playback speed.
+- Save each book's SRT path, local or online audio source, playback position, delay, and playback speed.
 - In the reader, `←/→` turn pages, `↑/↓` move Sasayaki to the previous/next cue, and `Enter` or Space plays/pauses the current cue. Press `y` to inspect the current matched cue and open detailed controls.
+- The reader highlights the active cue sentence and follows audio playback across pages when the player exposes current time.
 - Use `sasayaki list/play` from the command line. `sasayaki play --line` limits playback to the current cue range.
 - Audio playback prefers `mpv`, then `ffplay`; `ffplay` speed playback uses generated `atempo` filter chains. If no seek-capable player is available, it falls back to opening the file with the OS.
 
@@ -60,7 +61,9 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 
 - Write card rows to CSV.
 - Send cards through AnkiConnect when available.
-- Configure deck, model, fields, tags, and AnkiConnect URL from Settings.
+- Defaults use the Hoshi Android Lapis field mapping: `ExpressionAudio` gets word audio and `SentenceAudio` gets Sasayaki sentence audio.
+- Word audio supports the Hoshi online audio source and Ankiconnect Android `android.db` local audio databases. The local database path is configurable.
+- Configure deck, model, fields, tags, audio sources, and AnkiConnect URL from Settings.
 
 ### Sync And Backup
 
@@ -76,13 +79,13 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 
 ## Download
 
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.11). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.12). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.11-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.11-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.11-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.12-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.12-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.12-linux.tar.gz` |
 
 After installation, run:
 

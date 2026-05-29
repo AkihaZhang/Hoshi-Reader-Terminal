@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+import time
 import unittest
 
 from hoshi_terminal.epub import Chapter, ExtractedBook
@@ -7,6 +8,8 @@ from hoshi_terminal.sasayaki import (
     SasayakiCue,
     SasayakiMatch,
     SasayakiMatchData,
+    SasayakiPlayer,
+    cue_at_or_before_time,
     ffplay_atempo_filter,
     find_cue_for_page,
     filter_sasayaki_text,
@@ -14,6 +17,7 @@ from hoshi_terminal.sasayaki import (
     match_rate_text,
     match_sasayaki,
     parse_srt,
+    resolve_cue_audio_range,
 )
 
 
@@ -93,6 +97,45 @@ class SasayakiTests(unittest.TestCase):
         self.assertEqual(ffplay_atempo_filter(1.0), "")
         self.assertEqual(ffplay_atempo_filter(2.5), "atempo=2.0,atempo=1.250")
         self.assertEqual(ffplay_atempo_filter(0.25), "atempo=0.5,atempo=0.500")
+
+    def test_cue_at_or_before_time_keeps_navigation_anchor_after_cue_end(self) -> None:
+        data = SasayakiMatchData(
+            matches=[
+                SasayakiMatch("a", 10.0, 11.0, "a", 0, 0, 1),
+                SasayakiMatch("b", 20.0, 21.0, "b", 0, 2, 1),
+            ],
+            unmatched=0,
+        )
+
+        self.assertEqual(cue_at_or_before_time(data, 15.0).id, "a")
+
+    def test_resolve_cue_audio_range_expands_adjacent_sentence_cues(self) -> None:
+        target = SasayakiMatch("b", 12.0, 13.0, "は", 0, 1, 1)
+        data = SasayakiMatchData(
+            matches=[
+                SasayakiMatch("a", 10.0, 12.0, "僕", 0, 0, 1),
+                target,
+                SasayakiMatch("c", 13.0, 15.5, "学校へ行った", 0, 2, 6),
+                SasayakiMatch("d", 20.0, 21.0, "次の文", 0, 8, 3),
+            ],
+            unmatched=0,
+        )
+
+        self.assertEqual(resolve_cue_audio_range(data, target, "「僕は学校へ行った。」", delay=0.25), (10.25, 15.75))
+
+    def test_player_current_time_falls_back_to_internal_clock(self) -> None:
+        class FakeProcess:
+            def poll(self) -> None:
+                return None
+
+        player = SasayakiPlayer()
+        player.process = FakeProcess()  # type: ignore[assignment]
+        player.player_name = "ffplay"
+        player.base_position = 10.0
+        player.rate = 1.0
+        player.started_at = time.monotonic() - 2.0
+
+        self.assertGreaterEqual(player.current_time() or 0.0, 11.5)
 
 
 if __name__ == "__main__":
