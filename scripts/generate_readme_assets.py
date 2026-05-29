@@ -153,6 +153,12 @@ def render_terminal_svg(text: str) -> str:
             fill = "#8bdcff"
         if line.startswith("Hoshi Reader") or line in {"书库", "查词", "设置", "高级", "同步"}:
             fill = "#7ee6c4"
+        if "频率" in line:
+            fill = "#9ec9ff"
+        if "音高" in line:
+            fill = "#7ee6c4"
+        if line.strip().startswith("▼"):
+            fill = "#79d7ff"
         if "已" in line or "词典" in line:
             fill = "#a8f3b2"
         if "请选择" in line or "hoshi>" in line:

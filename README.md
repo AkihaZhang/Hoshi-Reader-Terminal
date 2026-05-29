@@ -27,7 +27,7 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 ### Bookshelf
 
 - Import one or multiple `.epub`, `.txt`, `.md`, `.html`, or `.xhtml` books.
-- Open books by numeric shelf selection, title fragment, id, or file path.
+- The shelf is the reading entry point: open the shelf, then type a number, title fragment, or id to start reading.
 - Keep reading progress, reading statistics, highlights, and notes.
 - Configure the default book directory from the terminal menu.
 
@@ -43,6 +43,7 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 ### Lookup
 
 - Import Yomitan Term / Frequency / Pitch dictionaries from folders or zip files.
+- Lookup results use terminal color badges for frequency, pitch, tags, and dictionary headings, approximating the hierarchy of the original Hoshi popup.
 - Enable, disable, and reorder dictionaries inside each type.
 - Search from the Dictionary menu, the command line, or inside the reader.
 - Page through long lookup results with arrow keys, and run recursive `/word` lookups inside the result view.
@@ -79,13 +80,13 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 
 ## Download
 
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.12). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
+Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.13). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.12-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.12-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.12-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.13-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.13-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.13-linux.tar.gz` |
 
 After installation, run:
 
@@ -112,7 +113,7 @@ The script downloads the latest release package for your OS and installs the `ho
 ```text
 menu                         Open main menu
 import PATH                  Import a book
-shelf                        Show bookshelf
+shelf                        Show bookshelf; in a TTY, enter a number to read
 read TARGET                  Read by number, id, title fragment, or path
 lookup WORD                  Look up a word
 dict-import PATH             Import a Yomitan dictionary zip or folder
@@ -175,7 +176,7 @@ Hoshi Reader Terminal stores imported books, dictionaries, card CSV files, readi
 
 ## Attribution
 
-The menu, reader, dictionary, Sasayaki, Anki, and sync behavior follow Hoshi Reader iOS / Android where it makes sense for a terminal. Terminal-compatible interaction structure is adapted from upstream behavior, while the cross-platform CLI layer is implemented in Python here.
+The menu, reader, dictionary, Sasayaki, Anki, and sync behavior follow Hoshi Reader iOS / Android where it makes sense for a terminal. The dictionary layer does not directly link the `hoshidicts-kotlin-bridge` JNI library; it is a Python/SQLite terminal implementation, with Term / Frequency / Pitch result structure, long-text scanning, and deinflection behavior kept aligned with upstream `hoshidicts` where practical.
 
 ## License
 

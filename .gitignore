@@ -15,3 +15,4 @@ build/
 .hoshi-terminal/
 *.pyz
 测试用/
+source-hoshidicts-kotlin-bridge/

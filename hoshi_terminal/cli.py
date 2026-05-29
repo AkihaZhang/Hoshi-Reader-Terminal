@@ -82,6 +82,7 @@ UI_TEXT = {
     "back": {"zh": "返回", "en": "Back", "ja": "戻る"},
     "main_back": {"zh": "返回主菜单", "en": "Back to Main Menu", "ja": "メインメニューへ戻る"},
     "shelf": {"zh": "书架", "en": "Shelf", "ja": "本棚"},
+    "shelf_read": {"zh": "书架 / 阅读", "en": "Shelf / Read", "ja": "本棚 / 読む"},
     "import_epub": {"zh": "导入 EPUB", "en": "Import EPUB", "ja": "EPUB をインポート"},
     "read": {"zh": "阅读", "en": "Read", "ja": "読む"},
     "book_settings": {"zh": "书库设置", "en": "Book Settings", "ja": "本棚設定"},
@@ -263,6 +264,14 @@ def cmd_shelf(args: argparse.Namespace) -> int:
         return 0
     print(style("Hoshi 终端书架", BOLD))
     _print_book_choices(books)
+    if sys.stdin.isatty():
+        query = _read_input("输入序号或标题片段开始阅读（留空只查看书架）：").strip() or None
+        if query is not None:
+            record = _find_book_for_input(library, query)
+            if record is None:
+                print("找不到这本书。")
+                return 1
+            _open_book_record(library, record)
     return 0
 
 
@@ -708,6 +717,7 @@ def _reader_sasayaki_panel(
         return
 
     while True:
+        print(clear_screen(), end="")
         print(style("Sasayaki", BOLD), f"{match_rate_text(match)}")
         cue_index = match.matches.index(cue) + 1
         _print_sasayaki_cue(cue, cue_index)
@@ -733,6 +743,7 @@ def _reader_sasayaki_panel(
         elif choice == "3":
             player.stop()
             print(style("已停止", GREEN))
+            _pause()
         elif choice == "4":
             cue = previous_cue(match, cue.start_time) or cue
         elif choice == "5":
@@ -939,6 +950,7 @@ def interactive_loop(
     sasayaki_player = SasayakiPlayer()
     chapter_offsets = _sasayaki_chapter_offsets(record)
     current_cue: SasayakiMatch | None = None
+    needs_render = True
 
     try:
         while True:
@@ -946,22 +958,27 @@ def interactive_loop(
             current_match = None
             if record is not None:
                 current_match = _sasayaki_match_data(library.sasayaki_for(record))
-            print(clear_screen(), end="")
-            print(
-                render_page(
-                    title,
-                    page,
-                    len(pages),
-                    vertical=vertical,
-                    highlight=current_cue.text if current_cue else None,
-                    sasayaki_status=_reader_sasayaki_status_text(current_cue, current_match),
+            if needs_render:
+                display_cue = current_cue or (find_cue_for_page(current_match, page.text) if current_match else None)
+                print(clear_screen(), end="")
+                print(
+                    render_page(
+                        title,
+                        page,
+                        len(pages),
+                        vertical=vertical,
+                        highlight=current_cue.text if current_cue else None,
+                        sasayaki_status=_reader_sasayaki_status_text(display_cue, current_match),
+                    )
                 )
-            )
-            command = _read_reader_command(style("hoshi> ", CYAN), timeout=0.35)
+                needs_render = False
+            polling = 0.5 if sasayaki_player.is_playing() and not sasayaki_player.paused else None
+            command = _read_reader_command(style("hoshi> ", CYAN), timeout=polling)
             tick_cue = _reader_sasayaki_tick(library, record, sasayaki_player, current_cue)
             if tick_cue is not None:
                 current_cue = tick_cue
                 page_index = _page_index_for_cue(pages, tick_cue, chapter_offsets, page_index)
+                needs_render = True
                 if command is None:
                     continue
                 page = pages[page_index]
@@ -970,8 +987,12 @@ def interactive_loop(
             command = command.strip()
             if command == "right":
                 page_index = min(len(pages) - 1, page_index + 1)
+                if not sasayaki_player.is_playing():
+                    current_cue = None
             elif command == "left":
                 page_index = max(0, page_index - 1)
+                if not sasayaki_player.is_playing():
+                    current_cue = None
             elif command == "down":
                 cue = _reader_sasayaki_play(library, record, page, sasayaki_player, direction="next")
                 if cue is not None:
@@ -1027,9 +1048,12 @@ def interactive_loop(
                 page_number = _parse_page_number(command[2:], len(pages))
                 if page_number is not None:
                     page_index = page_number
+                    if not sasayaki_player.is_playing():
+                        current_cue = None
             else:
                 print("未知命令。")
                 _read_input(style("按 Enter 继续", DIM))
+            needs_render = True
     finally:
         sasayaki_player.stop()
 
@@ -1074,20 +1098,16 @@ def books_menu() -> int:
         print(clear_screen(), end="")
         print(banner())
         print(style(_ui("books", library), BOLD))
-        print(f"1. {_ui('shelf', library)}")
+        print(f"1. {_ui('shelf_read', library)}")
         print(f"2. {_ui('import_epub', library)}")
-        print(f"3. {_ui('read', library)}")
-        print(f"4. {_ui('book_settings', library)}")
+        print(f"3. {_ui('book_settings', library)}")
         print(f"0. {_ui('back', library)}")
         choice = _read_input(style(_ui("choose", library), CYAN)).strip()
         if choice == "1":
-            cmd_shelf(argparse.Namespace())
-            _pause()
+            _menu_shelf_read()
         elif choice == "2":
             _menu_import_book()
         elif choice == "3":
-            _menu_shelf_read()
-        elif choice == "4":
             _bookshelf_settings()
         elif choice in {"0", "q", "Q", "返回", "back"}:
             return 0
@@ -1188,17 +1208,20 @@ def _menu_shelf_read() -> None:
         print("找不到这本书。")
         _pause()
         return
+    _open_book_record(library, record)
+    _pause("已返回。按 Enter 继续")
+
+
+def _open_book_record(library: Library, record: BookRecord) -> None:
     try:
         title, text = library.load_record_text(record)
     except Exception as exc:
         print(style(f"打开失败：{exc}", RED))
-        _pause()
         return
     pages = paginate(text)
     start_page = page_for_position(pages, record.position)
     vertical = library.settings["reader_vertical"] == "true"
     interactive_loop(title, text, pages, record, vertical, start_page=start_page)
-    _pause("已返回。按 Enter 继续")
 
 
 def _menu_lookup() -> None:

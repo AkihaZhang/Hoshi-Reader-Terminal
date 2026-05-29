@@ -60,6 +60,21 @@ class CliTests(unittest.TestCase):
         self.assertIn("Hoshi Reader", output.getvalue())
         self.assertIn("1. 书库", output.getvalue())
 
+    def test_books_menu_uses_shelf_as_read_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = StringIO()
+            with (
+                patch.dict(os.environ, {"HOSHI_TERMINAL_HOME": str(Path(temp_dir) / "state"), "NO_COLOR": "1"}),
+                patch("builtins.input", side_effect=["1", "0", "0"]),
+                patch("sys.stdout", output),
+            ):
+                code = main([])
+
+        self.assertEqual(code, 0)
+        text = output.getvalue()
+        self.assertIn("1. 书架 / 阅读", text)
+        self.assertNotIn("3. 阅读", text)
+
     def test_backup_is_created_outside_library_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

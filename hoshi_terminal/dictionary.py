@@ -11,9 +11,12 @@ import sqlite3
 import textwrap
 import zipfile
 
+from .terminal import BOLD, CYAN, DIM, GREEN, MAGENTA, RESET, YELLOW, ansi_enabled, rgb, style
+
 
 DICTIONARY_TYPES = ("term", "frequency", "pitch")
 IMPORT_CHUNK_SIZE = 10_000
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 TYPE_LABELS = {
     "term": "Term / 释义",
     "frequency": "Frequency / 频率",
@@ -610,39 +613,40 @@ def infer_dictionary_type(source: Path, dictionary_name: str) -> str:
 
 def format_results(results: list[LookupResult]) -> str:
     if not results:
-        return "没有命中。"
+        return style("没有命中。", DIM)
     blocks: list[str] = []
     for index, group in enumerate(_group_lookup_results(results), start=1):
         first = group[0]
-        heading = f"{index}. {first.term}"
+        heading = f"{style(str(index) + '.', DIM)} {style(first.term, BOLD)}"
         if first.reading and first.reading != first.term:
-            heading += f" [{first.reading}]"
+            heading += f" {style(first.reading, YELLOW)}"
         if first.note:
-            heading += f"  ({first.note})"
+            heading += f"  {style(first.note, DIM)}"
         lines = [heading]
 
         frequencies = _unique(item for result in group for item in result.frequencies)
         pitches = _unique(item for result in group for item in result.pitches)
         if frequencies:
-            lines.append("   频率 " + " ".join(_aux_badge(item) for item in frequencies[:10]))
+            lines.append(f"   {style('频率', MAGENTA)} " + " ".join(_aux_badge(item, "frequency") for item in frequencies[:10]))
         if pitches:
-            lines.append("   音高 " + " ".join(_aux_badge(item) for item in pitches[:8]))
-        lines.append(f"   操作  a {first.term} 制卡    /{first.term} 递归查词")
+            lines.append(f"   {style('音高', CYAN)} " + " ".join(_aux_badge(item, "pitch") for item in pitches[:8]))
+        lines.append(style(f"   操作  a {first.term} 制卡    /{first.term} 递归查词", DIM))
 
         by_dictionary: dict[str, list[LookupResult]] = {}
         for result in group:
             by_dictionary.setdefault(result.dictionary, []).append(result)
         for dictionary, entries in by_dictionary.items():
-            lines.append(f"   ▼ {dictionary}")
+            lines.append(f"   {style('▼', CYAN)} {style(dictionary, BOLD + CYAN)}")
             for entry_index, entry in enumerate(entries, start=1):
                 tags = _unique([*entry.term_tags, *entry.definition_tags])
-                tag_text = f" [{' / '.join(tags)}]" if tags else ""
+                tag_text = " ".join(_tag_badge(tag) for tag in tags) if ansi_enabled() else f"[{' / '.join(tags)}]"
+                tag_text = tag_text if tags else ""
                 prefix = f"      {entry_index}. " if len(entries) > 1 else "      "
                 if tag_text:
-                    lines.append(prefix + tag_text.strip())
+                    lines.append(prefix + tag_text)
                 for definition_index, definition in enumerate(entry.definitions[:4], start=1):
                     marker = "・" if len(entry.definitions) == 1 else f"{definition_index}."
-                    lines.append(f"      {marker} {_shorten(definition, 520)}")
+                    lines.append(f"      {style(marker, GREEN)} {_shorten(definition, 520)}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
@@ -688,8 +692,11 @@ def paginate_lookup_text(text: str, lines_per_page: int = 18, width: int = 88) -
 
 
 def _wrap_lookup_line(line: str, width: int) -> list[str]:
-    if len(line) <= width:
+    visible = ANSI_RE.sub("", line)
+    if len(visible) <= width:
         return [line]
+    if visible != line:
+        line = visible
     indent_length = len(line) - len(line.lstrip(" "))
     indent = line[:indent_length]
     content = line[indent_length:]
@@ -937,11 +944,32 @@ def _unique(items: Iterable[str]) -> list[str]:
     return values
 
 
-def _aux_badge(text: str) -> str:
+def _aux_badge(text: str, kind: str = "aux") -> str:
     if ": " in text:
         dictionary, value = text.split(": ", 1)
-        return f"[{_shorten(dictionary, 24)} {value}]"
-    return f"[{_shorten(text, 32)}]"
+        return _badge(_shorten(dictionary, 24), value, kind)
+    return _badge(_shorten(text, 32), "", kind)
+
+
+def _tag_badge(text: str) -> str:
+    return _badge(text, "", "tag")
+
+
+def _badge(label: str, value: str = "", kind: str = "aux") -> str:
+    if not ansi_enabled():
+        content = f"{label} {value}".strip()
+        return f"[{content}]"
+    palettes = {
+        "frequency": ((87, 139, 214), (245, 248, 255)),
+        "pitch": ((105, 197, 185), (246, 255, 252)),
+        "tag": ((171, 126, 213), (255, 250, 255)),
+        "aux": ((114, 156, 213), (247, 250, 255)),
+    }
+    label_bg, value_bg = palettes.get(kind, palettes["aux"])
+    label_text = f"{rgb((255, 255, 255), label_bg)}{BOLD} {label} {RESET}"
+    if not value:
+        return label_text
+    return f"{label_text}{rgb((25, 32, 42), value_bg)} {value} {RESET}"
 
 
 def _shorten(text: str, limit: int = 360) -> str:

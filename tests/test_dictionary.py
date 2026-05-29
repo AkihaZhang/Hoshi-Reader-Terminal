@@ -1,8 +1,9 @@
 from pathlib import Path
+import os
 import tempfile
 import unittest
 
-from hoshi_terminal.dictionary import DictionaryManager, deinflect, format_result_pages, format_results, paginate_lookup_text
+from hoshi_terminal.dictionary import DictionaryManager, LookupResult, deinflect, format_result_pages, format_results, paginate_lookup_text
 
 
 class DictionaryTests(unittest.TestCase):
@@ -47,6 +48,46 @@ class DictionaryTests(unittest.TestCase):
         self.assertIn("前方扫描", results[0].note)
         self.assertIn("▼ Tiny", rendered)
         self.assertIn("[common / 名詞]", rendered)
+
+    def test_lookup_result_uses_color_when_enabled(self) -> None:
+        previous_force = os.environ.get("FORCE_COLOR")
+        previous_no_color = os.environ.get("NO_COLOR")
+        previous_term = os.environ.get("TERM")
+        os.environ["FORCE_COLOR"] = "1"
+        os.environ.pop("NO_COLOR", None)
+        os.environ["TERM"] = "xterm-256color"
+        try:
+            rendered = format_results(
+                [
+                    LookupResult(
+                        term="秋",
+                        reading="あき",
+                        definitions=["autumn"],
+                        dictionary="Tiny",
+                        matched="秋",
+                        frequencies=["JLPT [あき]: N5"],
+                        pitches=["Accent [あき]: 1"],
+                        term_tags=["common"],
+                    )
+                ]
+            )
+        finally:
+            if previous_force is None:
+                os.environ.pop("FORCE_COLOR", None)
+            else:
+                os.environ["FORCE_COLOR"] = previous_force
+            if previous_no_color is None:
+                os.environ.pop("NO_COLOR", None)
+            else:
+                os.environ["NO_COLOR"] = previous_no_color
+            if previous_term is None:
+                os.environ.pop("TERM", None)
+            else:
+                os.environ["TERM"] = previous_term
+
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("JLPT", rendered)
+        self.assertIn("Tiny", rendered)
 
     def test_lookup_output_can_be_paginated(self) -> None:
         pages = paginate_lookup_text("one\ntwo\nthree\n\nfour\nfive", lines_per_page=3)
