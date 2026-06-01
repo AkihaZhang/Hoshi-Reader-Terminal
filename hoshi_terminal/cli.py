@@ -1013,13 +1013,14 @@ def interactive_loop(
                         page,
                         len(pages),
                         vertical=vertical,
-                        highlight=current_cue.text if current_cue else None,
+                        highlight=display_cue.text if display_cue else None,
                         sasayaki_status=_reader_sasayaki_status_text(display_cue, current_match),
                     )
                 )
                 needs_render = False
             polling = 0.5 if sasayaki_player.is_playing() and not sasayaki_player.paused else None
-            command = _read_reader_command(style("hoshi> ", CYAN), timeout=polling)
+            prompt = "" if polling is not None else style("hoshi> ", CYAN)
+            command = _read_reader_command(prompt, timeout=polling)
             tick_cue = _reader_sasayaki_tick(library, record, sasayaki_player, current_cue)
             if tick_cue is not None:
                 current_cue = tick_cue

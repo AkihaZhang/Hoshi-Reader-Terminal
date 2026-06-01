@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hoshi-reader-terminal"
-version = "0.1.15"
+version = "0.1.16"
 description = "A terminal Japanese reader with bookshelf, dictionary lookup, Anki card creation, and Sasayaki audiobook support."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "GPL-3.0-only" }
 authors = [{ name = "Hoshi Reader Terminal contributors" }]
 keywords = ["epub", "reader", "terminal", "japanese", "yomitan", "parody"]
 classifiers = [
@@ -16,6 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Operating System :: OS Independent",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
   "Topic :: Text Processing",
 ]
 

@@ -5,7 +5,7 @@ import re
 import unicodedata
 
 from .sasayaki import filter_sasayaki_text
-from .terminal import BOLD, CYAN, DIM, GREEN, style, terminal_size, wrap_paragraphs
+from .terminal import BOLD, CYAN, DIM, GREEN, RESET, ansi_enabled, rgb, style, terminal_size, wrap_paragraphs
 
 
 VERTICAL_NARROW_MAP = {
@@ -30,6 +30,11 @@ VERTICAL_NARROW_MAP = {
     "・": "･",
     "…": "…",
 }
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+READER_MUTED = (116, 104, 88)
+CURRENT_SENTENCE_BG = (188, 216, 225)
+CURRENT_SENTENCE_INK = (18, 38, 45)
 
 
 @dataclass(frozen=True)
@@ -86,35 +91,88 @@ def render_page(
     highlight: str | None = None,
     sasayaki_status: str | None = None,
 ) -> str:
+    if vertical:
+        return render_vertical_page(title, page, total_pages, highlight=highlight, sasayaki_status=sasayaki_status)
+
     header = style(title, BOLD) + style(f"  第 {page.index + 1}/{total_pages} 页", DIM)
     ruler = style("─" * min(96, max(24, len(header))), CYAN)
     page_text = highlight_sentence(page.text, highlight) if highlight else page.text
-    content = render_vertical(page_text) if vertical else page_text
+    content = page_text
     status = [style(f"Sasayaki: {sasayaki_status}", CYAN)] if sasayaki_status else []
     footer = "\n".join(
         [
-            style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放    c 章节    y 有声书    q 退出", DIM),
-            style("输入 /読みました 查词    输入 a 読む 制卡    输入 h 备注内容 划线", DIM),
+            style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放/暂停    c 章节    y 有声书    q 退出", DIM),
+            style("按 / 输入单词查词    按 a 输入单词制卡    h 备注/划线    s 统计", DIM),
         ]
     )
     return "\n".join([header, ruler, content, *status, ruler, footer])
 
 
+def render_vertical_page(
+    title: str,
+    page: Page,
+    total_pages: int,
+    highlight: str | None = None,
+    sasayaki_status: str | None = None,
+) -> str:
+    columns, terminal_rows = terminal_size(default_columns=120, default_rows=36)
+    width = max(64, columns)
+    content_rows = max(10, terminal_rows - 7)
+    max_columns = max(4, min(28, (width - 8) // 5))
+    percent = (page.index + 1) / max(1, total_pages) * 100.0
+    progress = f"{title}  {page.index + 1}/{total_pages}  {percent:.2f}%"
+    nav = "书籍 │ 词典 │ 设置"
+    lines = [
+        _layout_line(_spread_line(nav, progress, width), width, fg=READER_MUTED, bold=True),
+        _layout_line("", width),
+    ]
+    body = render_vertical(page.text, rows=content_rows, highlight=highlight, paper=True, max_columns=max_columns).splitlines()
+    body_width = max((_visible_width(line) for line in body), default=0)
+    for line in body:
+        left = max(2, (width - body_width) // 2)
+        right = max(0, width - left - _visible_width(line))
+        lines.append(" " * left + line + " " * right)
+    while len(lines) < max(4, terminal_rows - 3):
+        lines.append(_layout_line("", width))
+    if sasayaki_status:
+        lines.append(_layout_line(f"Sasayaki  {sasayaki_status}", width, align="center", fg=READER_MUTED))
+    else:
+        lines.append(_layout_line("", width))
+    lines.append(
+        _layout_line(
+            "←/→ 翻页    ↑/↓ 上/下一句    Enter/Space 播放/暂停    / 查词    a 制卡    h 备注    q 退出",
+            width,
+            align="center",
+            fg=READER_MUTED,
+        )
+    )
+    return "\n".join(lines[:terminal_rows])
+
+
 def highlight_sentence(text: str, highlight: str | None) -> str:
-    if not highlight:
+    ranges = _highlight_ranges(text, highlight)
+    if not ranges:
         return text
+    start, end = ranges[0]
+    return text[:start] + style(text[start:end], BOLD + CYAN) + text[end:]
+
+
+def _highlight_ranges(text: str, highlight: str | None) -> list[tuple[int, int]]:
+    if not highlight:
+        return []
     if highlight in text:
-        return text.replace(highlight, style(highlight, BOLD + CYAN), 1)
+        start = text.find(highlight)
+        return [(start, start + len(highlight))]
     filtered_text, positions = _filtered_with_positions(text)
     filtered_highlight = filter_sasayaki_text(highlight)
     if not filtered_text or not filtered_highlight:
-        return text
+        return []
     index = filtered_text.find(filtered_highlight)
     if index < 0:
-        return text
+        return []
     start = positions[index]
     end = positions[index + len(filtered_highlight) - 1] + 1
-    return text[:start] + style(text[start:end], BOLD + CYAN) + text[end:]
+    return [(start, end)]
 
 
 def _filtered_with_positions(text: str) -> tuple[str, list[int]]:
@@ -128,30 +186,61 @@ def _filtered_with_positions(text: str) -> tuple[str, list[int]]:
     return "".join(chars), positions
 
 
-def render_vertical(text: str, rows: int | None = None) -> str:
-    plain = re.sub(r"\s+", "", text)
-    if not plain:
+def render_vertical(
+    text: str,
+    rows: int | None = None,
+    highlight: str | None = None,
+    paper: bool = False,
+    max_columns: int | None = None,
+) -> str:
+    items = _vertical_items(text, highlight)
+    if not items:
         return ""
     _, terminal_rows = terminal_size()
     rows = rows or max(8, min(24, terminal_rows - 10))
-    chunks = [plain[index : index + rows] for index in range(0, len(plain), rows)]
-    chunks = chunks[:8]
+    chunks = [items[index : index + rows] for index in range(0, len(items), rows)]
+    chunks = chunks[: max_columns or 8]
     output: list[str] = []
     for row in range(rows):
         cells = []
         for chunk in reversed(chunks):
-            cells.append(vertical_cell(chunk[row]) if row < len(chunk) else "  ")
+            if row < len(chunk):
+                char, is_highlighted = chunk[row]
+                cells.append(vertical_cell(char, highlighted=is_highlighted, paper=paper))
+            else:
+                cells.append("  ")
         output.append(" ".join(cells).rstrip())
+    if paper:
+        return "\n".join(output).rstrip()
     warning = style("[竖排显示]", GREEN)
     return warning + "\n" + "\n".join(output).rstrip()
 
 
-def vertical_cell(char: str) -> str:
+def _vertical_items(text: str, highlight: str | None) -> list[tuple[str, bool]]:
+    ranges = _highlight_ranges(text, highlight)
+    items: list[tuple[str, bool]] = []
+    for index, char in enumerate(text):
+        if char.isspace():
+            continue
+        highlighted = any(start <= index < end for start, end in ranges)
+        items.append((char, highlighted))
+    return items
+
+
+def vertical_cell(char: str, highlighted: bool = False, paper: bool = False) -> str:
     visible = VERTICAL_NARROW_MAP.get(char, char)
     width = terminal_cell_width(visible)
     if width <= 0:
-        return "  "
-    return visible + (" " * max(0, 2 - width))
+        cell = "  "
+    else:
+        cell = visible + (" " * max(0, 2 - width))
+    if paper:
+        if highlighted:
+            return _ansi_span(cell, fg=CURRENT_SENTENCE_INK, bg=CURRENT_SENTENCE_BG, bold=True)
+        return cell
+    if highlighted:
+        return style(cell, BOLD + CYAN)
+    return cell
 
 
 def terminal_cell_width(char: str) -> int:
@@ -164,6 +253,71 @@ def terminal_cell_width(char: str) -> int:
             continue
         width += 2 if unicodedata.east_asian_width(codepoint) in {"W", "F"} else 1
     return width
+
+
+def _ansi_span(
+    text: str,
+    fg: tuple[int, int, int] | None = None,
+    bg: tuple[int, int, int] | None = None,
+    bold: bool = False,
+) -> str:
+    if not ansi_enabled():
+        return text
+    code = rgb(fg, bg)
+    if not code and not bold:
+        return text
+    return f"{BOLD if bold else ''}{code}{text}{RESET}"
+
+
+def _layout_line(
+    content: str,
+    width: int,
+    align: str = "left",
+    fg: tuple[int, int, int] | None = None,
+    bold: bool = False,
+) -> str:
+    visible = _visible_width(content)
+    if visible > width:
+        content = _truncate_visible(content, width)
+        visible = _visible_width(content)
+    remaining = max(0, width - visible)
+    if align == "center":
+        left = remaining // 2
+        right = remaining - left
+    elif align == "right":
+        left = remaining
+        right = 0
+    else:
+        left = 0
+        right = remaining
+    return _ansi_span(" " * left + content + " " * right, fg=fg, bold=bold)
+
+
+def _spread_line(left: str, right: str, width: int) -> str:
+    left_width = _visible_width(left)
+    right_width = _visible_width(right)
+    if left_width + right_width + 2 > width:
+        right = _truncate_visible(right, max(12, width - left_width - 2))
+        right_width = _visible_width(right)
+    return left + (" " * max(1, width - left_width - right_width)) + right
+
+
+def _visible_width(text: str) -> int:
+    plain = ANSI_RE.sub("", text)
+    return sum(terminal_cell_width(char) for char in plain)
+
+
+def _truncate_visible(text: str, width: int) -> str:
+    output: list[str] = []
+    used = 0
+    plain = ANSI_RE.sub("", text)
+    for char in plain:
+        char_width = terminal_cell_width(char)
+        if used + char_width > width:
+            break
+        output.append(char)
+        used += char_width
+    return "".join(output)
 
 
 def sentence_around(text: str, needle: str) -> str:

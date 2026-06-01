@@ -1,4 +1,4 @@
-# Hoshi Reader Terminal ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![安装](https://img.shields.io/badge/install-one--click%20script-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
+# Hoshi Reader Terminal ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![安装](https://img.shields.io/badge/install-one--click%20script-3fb6e8) ![License](https://img.shields.io/badge/license-GPLv3-blue)
 
 [English](README.md) | **简体中文**
 
@@ -56,13 +56,13 @@ irm https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download
 hoshi
 ```
 
-三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.15)：
+三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.16)：
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.15-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.15-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.15-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.16-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.16-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.16-linux.tar.gz` |
 
 运行需要 Python 3.10 或更高版本。
 
@@ -96,4 +96,4 @@ hoshi 更新 -y
 
 ## License
 
-MIT License，见 [LICENSE](LICENSE)。
+Distributed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.

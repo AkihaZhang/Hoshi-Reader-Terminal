@@ -44,6 +44,34 @@ class ReaderTests(unittest.TestCase):
         self.assertNotIn("p 上一页", rendered)
         self.assertNotIn("v 纵书", rendered)
 
+    def test_vertical_reader_uses_layout_without_page_background(self) -> None:
+        previous = os.environ.get("FORCE_COLOR")
+        previous_no_color = os.environ.get("NO_COLOR")
+        previous_term = os.environ.get("TERM")
+        os.environ["FORCE_COLOR"] = "1"
+        os.environ.pop("NO_COLOR", None)
+        os.environ["TERM"] = "xterm-256color"
+        try:
+            rendered = render_page("book", Page(0, 0, 1, "私は星を読んだ。"), 2, vertical=True, highlight="星を読んだ")
+        finally:
+            if previous is None:
+                os.environ.pop("FORCE_COLOR", None)
+            else:
+                os.environ["FORCE_COLOR"] = previous
+            if previous_no_color is None:
+                os.environ.pop("NO_COLOR", None)
+            else:
+                os.environ["NO_COLOR"] = previous_no_color
+            if previous_term is None:
+                os.environ.pop("TERM", None)
+            else:
+                os.environ["TERM"] = previous_term
+
+        self.assertIn("book", rendered)
+        self.assertIn("←/→ 翻页", rendered)
+        self.assertIn("48;2;188;216;225", rendered)
+        self.assertNotIn("48;2;238;224;201", rendered)
+
     def test_reader_highlights_sasayaki_sentence_in_plain_text(self) -> None:
         previous = os.environ.get("FORCE_COLOR")
         previous_no_color = os.environ.get("NO_COLOR")

@@ -50,7 +50,7 @@ def main() -> int:
                 """,
                 color=True,
             ),
-            "02-reader.svg": _run(["python3", "-m", "hoshi_terminal", "阅读", "1", "--print", "--width", "72", "--lines", "15"], home=home),
+            "02-reader.svg": _run(["python3", "-m", "hoshi_terminal", "阅读", "1", "--print", "--vertical"], home=home),
             "03-dictionary.svg": _run(["python3", "-m", "hoshi_terminal", "查词", "秋"]),
             "04-sync.svg": _run(["python3", "-m", "hoshi_terminal", "同步", "export", "--path", str(sync)], home=home),
             "05-settings.svg": _snippet(
@@ -185,7 +185,7 @@ def _trim_lines(text: str) -> list[str]:
     if not raw:
         return [""]
     if len(raw) > 34:
-        raw = raw[:32] + ["..."]
+        raw = raw[:30] + ["..."] + raw[-3:]
     return [line[:110] for line in raw]
 
 

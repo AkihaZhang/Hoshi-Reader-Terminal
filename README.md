@@ -1,4 +1,4 @@
-# Hoshi Reader Terminal ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![Install](https://img.shields.io/badge/install-one--click%20script-3fb6e8) ![License](https://img.shields.io/badge/license-MIT-blue)
+# Hoshi Reader Terminal ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey) ![Install](https://img.shields.io/badge/install-one--click%20script-3fb6e8) ![License](https://img.shields.io/badge/license-GPLv3-blue)
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -56,13 +56,13 @@ Then run:
 hoshi
 ```
 
-Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.15):
+Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.16):
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.15-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.15-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.15-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.16-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.16-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.16-linux.tar.gz` |
 
 Python 3.10+ is required.
 
@@ -96,4 +96,4 @@ Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导�
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+Distributed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
