@@ -6,7 +6,15 @@ import unittest
 import zipfile
 from unittest.mock import patch
 
-from hoshi_terminal.cli import _find_book_for_input, _language_name, _normalize_reader_key, create_backup, main
+from hoshi_terminal.cli import (
+    _chapter_marks_from_extracted,
+    _find_book_for_input,
+    _language_name,
+    _normalize_reader_key,
+    create_backup,
+    main,
+)
+from hoshi_terminal.epub import Chapter, ExtractedBook
 from hoshi_terminal.storage import Library
 
 
@@ -45,6 +53,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(_normalize_reader_key("\x1b[D"), "left")
         self.assertEqual(_normalize_reader_key("\n"), "")
         self.assertEqual(_normalize_reader_key(" "), "space")
+
+    def test_chapter_marks_use_joined_book_offsets(self) -> None:
+        book = ExtractedBook(
+            title="Book",
+            chapters=[
+                Chapter("One", "abc"),
+                Chapter("Two", "defg"),
+            ],
+        )
+
+        self.assertEqual(_chapter_marks_from_extracted(book), [("One", 0), ("Two", 5)])
 
     def test_no_args_opens_menu(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

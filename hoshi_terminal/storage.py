@@ -171,6 +171,67 @@ class Library:
             known_sources.add(str(source))
         return imported, skipped
 
+    def rename_book(self, book_id: str, title: str) -> bool:
+        title = title.strip()
+        if not title:
+            return False
+        for item in self._state.setdefault("books", []):
+            if item.get("id") == book_id:
+                old_title = str(item.get("title", ""))
+                item["title"] = title
+                item["last_access"] = _now()
+                for highlight in self._state.setdefault("highlights", []):
+                    if highlight.get("book_id") == book_id or highlight.get("title") == old_title:
+                        highlight["title"] = title
+                for statistic in self._state.setdefault("statistics", []):
+                    if statistic.get("title") == old_title:
+                        statistic["title"] = title
+                self._save_state()
+                return True
+        return False
+
+    def delete_book(self, book_id: str) -> bool:
+        books = self._state.setdefault("books", [])
+        remaining: list[dict[str, object]] = []
+        removed: dict[str, object] | None = None
+        for item in books:
+            if item.get("id") == book_id:
+                removed = item
+            else:
+                remaining.append(item)
+        if removed is None:
+            return False
+        self._state["books"] = remaining
+        self._state["highlights"] = [
+            item for item in self._state.setdefault("highlights", []) if item.get("book_id") != book_id
+        ]
+        sasayaki = self._state.setdefault("sasayaki", {})
+        if isinstance(sasayaki, dict):
+            sasayaki.pop(book_id, None)
+        stored_path = Path(str(removed.get("stored_path", ""))).expanduser()
+        if stored_path.exists() and stored_path.is_file():
+            stored_path.unlink()
+        self._save_state()
+        return True
+
+    def mark_book_read(self, book_id: str) -> bool:
+        for item in self._state.setdefault("books", []):
+            if item.get("id") != book_id:
+                continue
+            record = BookRecord.from_dict(item)
+            try:
+                _, text = self.load_record_text(record)
+            except Exception:
+                total = max(int(item.get("position", 0)), int(item.get("characters_read", 0)))
+            else:
+                total = character_count(text)
+            item["position"] = total
+            item["characters_read"] = max(total, int(item.get("characters_read", 0)))
+            item["last_access"] = _now()
+            self._save_state()
+            return True
+        return False
+
     def find_book(self, query: str | None) -> BookRecord | None:
         books = self.books
         if not books:

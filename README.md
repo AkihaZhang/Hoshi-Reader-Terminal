@@ -2,9 +2,9 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-A terminal Japanese EPUB reader inspired by [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) and [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android), with bookshelf management, Yomitan lookup, Sasayaki audiobook matching, Anki card creation, reading statistics, and local progress sync.
+Hoshi Reader Terminal is a cross-platform terminal reader for Japanese books. It provides a bookshelf, paginated reading, Yomitan dictionary lookup, Anki card creation, Sasayaki audiobook matching, reading statistics, and local TTU-style progress sync.
 
-Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, dictionary lookup, and card creation entirely inside the terminal, thoroughly fixing the design flaw that Hoshi Reader is too easy to use.
+It follows the structure of Hoshi Reader iOS and Android where terminal interaction makes sense.
 
 <p align="center">
   <img src="docs/images/01-menu.svg" alt="Main menu" width="760">
@@ -24,77 +24,21 @@ Hoshi Reader Terminal is for true cyber ascetics: it puts novel reading, diction
 
 ## Features
 
-### Bookshelf
+- Bookshelf-first reading: import books, open books from the shelf, rename/delete books, mark books as read, sync one book, or start Sasayaki matching from the book context.
+- Supports `.epub`, `.txt`, `.md`, `.html`, and `.xhtml`.
+- Terminal reader with arrow-key page turns, lookup, card creation, highlights, notes, statistics, horizontal layout, and terminal vertical layout.
+- Yomitan Term / Frequency / Pitch dictionary import from zip files or folders.
+- Dictionary priority controls, enable/disable toggles, paginated lookup results, recursive lookup, and color-coded terminal badges.
+- Sasayaki flow for SubPlz `.srt` matching, local or online audio, cue navigation, cue highlighting, playback position, delay, and speed.
+- CSV card export and AnkiConnect card creation with Hoshi/Lapis-style default fields.
+- Word audio from online sources or an Ankiconnect Android `android.db` local audio database.
+- Local progress/statistics sync using a `ttu-reader-data` style folder.
+- Simplified Chinese, English, and Japanese interface labels.
+- GitHub Release update checks and in-place portable updates.
 
-- Import one or multiple `.epub`, `.txt`, `.md`, `.html`, or `.xhtml` books.
-- The shelf is the reading entry point: open the shelf, then type a number, title fragment, or id to start reading.
-- Keep reading progress, reading statistics, highlights, and notes.
-- Configure the default book directory from the terminal menu.
+## Install
 
-### Reading
-
-- Read in paginated terminal pages.
-- Switch between horizontal text and terminal vertical layout. Vertical mode uses terminal cell widths: kanji/kana are treated as double-width, and common Japanese punctuation is narrowed for alignment.
-- Use clear reader commands with examples shown on screen:
-  - `/読みました` for lookup
-  - `a 読む` for card creation
-  - `h note` for highlight notes
-
-### Lookup
-
-- Import Yomitan Term / Frequency / Pitch dictionaries from folders or zip files.
-- Lookup results use terminal color badges for frequency, pitch, tags, and dictionary headings, approximating the hierarchy of the original Hoshi popup.
-- Enable, disable, and reorder dictionaries inside each type.
-- Search from the Dictionary menu, the command line, or inside the reader.
-- Page through long lookup results with arrow keys, and run recursive `/word` lookups inside the result view.
-- Includes lightweight Japanese deinflection for common polite and past forms.
-
-### Sasayaki Audiobooks
-
-- Ports the core upstream Sasayaki flow: parse SubPlz `.srt` files, filter book text, match cues in reading order, and report a match rate.
-- Save each book's SRT path, local or online audio source, playback position, delay, and playback speed.
-- In the reader, `←/→` turn pages, `↑/↓` move Sasayaki to the previous/next cue, and `Enter` or Space plays/pauses the current cue. Press `y` to inspect the current matched cue and open detailed controls.
-- The reader highlights the active cue sentence and follows audio playback across pages when the player exposes current time.
-- Use `sasayaki list/play` from the command line. `sasayaki play --line` limits playback to the current cue range.
-- Audio playback prefers `mpv`, then `ffplay`; `ffplay` speed playback uses generated `atempo` filter chains. If no seek-capable player is available, it falls back to opening the file with the OS.
-
-### Anki Cards
-
-- Write card rows to CSV.
-- Send cards through AnkiConnect when available.
-- Defaults use the Hoshi Android Lapis field mapping: `ExpressionAudio` gets word audio and `SentenceAudio` gets Sasayaki sentence audio.
-- Word audio supports the Hoshi online audio source and Ankiconnect Android `android.db` local audio databases. The local database path is configurable.
-- Configure deck, model, fields, tags, audio sources, and AnkiConnect URL from Settings.
-
-### Sync And Backup
-
-- Export and import progress/statistics through a local `ttu-reader-data` style sync folder.
-- Create backups outside the data directory so the backup archive never includes itself.
-
-### Interface
-
-- Launch the terminal menu with `hoshi`.
-- Switch interface labels between Simplified Chinese, English, and Japanese.
-- Uses a neofetch-style terminal logo based on the Hoshi icon.
-- Check GitHub Releases from the terminal and update the current portable install in place.
-
-## Download
-
-Download portable packages from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.13). The one-click scripts below are the recommended install path. Portable zip/tar packages require Python 3.10+.
-
-| OS | Package |
-| --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.13-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.13-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.13-linux.tar.gz` |
-
-After installation, run:
-
-```bash
-hoshi
-```
-
-## One-Click Install
+Use the one-click script for your OS:
 
 ```bash
 # macOS / Linux
@@ -106,47 +50,43 @@ curl -fsSL https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/d
 irm https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download/install.ps1 | iex
 ```
 
-The script downloads the latest release package for your OS and installs the `hoshi` command. Python 3.10+ is required; if Python is missing, the script prints what to do next.
-
-## Commands
-
-```text
-menu                         Open main menu
-import PATH                  Import a book
-shelf                        Show bookshelf; in a TTY, enter a number to read
-read TARGET                  Read by number, id, title fragment, or path
-lookup WORD                  Look up a word
-dict-import PATH             Import a Yomitan dictionary zip or folder
-dict-list [TYPE]             List Term / Frequency / Pitch dictionaries
-dict-order TYPE FROM TO      Reorder dictionaries inside one type
-dict-toggle TYPE INDEX [on|off] Enable or disable a dictionary
-card WORD                    Write CSV or send to AnkiConnect
-stats                        Show reading statistics
-sync [auto|export|import]    Sync reading progress
-sasayaki status BOOK         Show audiobook matching state
-sasayaki match BOOK SRT      Match an SRT file, optionally with --audio
-sasayaki list/play BOOK      List or play matched cues
-sasayaki play BOOK --line    Play only the current cue time range
-settings                     Open settings
-doctor                       Check runtime environment
-update                       Check GitHub Releases for updates
-update -y                    Download the release package and replace the current pyz
-```
-
-Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导入词典`, `制卡`, `统计`, `同步`, `有声书`, `设置`, `诊断`, `检查更新`, and `更新` are also supported. Use `hoshi update --check` for a check-only run.
-
-## From Source
+Then run:
 
 ```bash
-python3 -m pip install -e .
 hoshi
 ```
 
-Run without installing:
+Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.14):
 
-```bash
-python3 -m hoshi_terminal menu
+| OS | Package |
+| --- | --- |
+| Windows | `Hoshi-Reader-Terminal-0.1.14-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.14-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.14-linux.tar.gz` |
+
+Python 3.10+ is required.
+
+## Common Commands
+
+```text
+hoshi                         Open the terminal menu
+hoshi import PATH             Import a book
+hoshi shelf                   Show the shelf; enter a number to read
+hoshi read TARGET             Read by number, id, title fragment, or path
+hoshi lookup WORD             Look up a word
+hoshi dict-import PATH        Import a Yomitan dictionary
+hoshi dict-list [TYPE]        List Term / Frequency / Pitch dictionaries
+hoshi dict-order TYPE FROM TO Reorder dictionaries
+hoshi card WORD               Create a CSV/AnkiConnect card
+hoshi sync [auto|export|import]
+hoshi sasayaki status BOOK
+hoshi sasayaki match BOOK SRT --audio AUDIO
+hoshi settings
+hoshi update --check
+hoshi update -y
 ```
+
+Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导入词典`, `制卡`, `统计`, `同步`, `有声书`, `设置`, `诊断`, `检查更新`, and `更新` are also supported.
 
 ## Data Directory
 
@@ -154,30 +94,6 @@ python3 -m hoshi_terminal menu
 - macOS: `~/Library/Application Support/HoshiReaderTerminal`
 - Linux: `~/.local/share/hoshi-reader-terminal`
 
-Portable run:
-
-```bash
-HOSHI_TERMINAL_HOME=.hoshi-terminal python3 -m hoshi_terminal shelf
-```
-
-## Development
-
-```bash
-python3 -m unittest discover -s tests
-python3 scripts/generate_readme_assets.py
-python3 scripts/build_packages.py
-```
-
-Release packages can be generated with `scripts/build_packages.py`. Releases ship the three portable OS packages plus one-click install scripts.
-
-## Privacy And Data
-
-Hoshi Reader Terminal stores imported books, dictionaries, card CSV files, reading progress, highlights, statistics, and settings locally in its data directory. Sync uses a user-configured local folder. Anki card creation only contacts the configured AnkiConnect endpoint.
-
-## Attribution
-
-The menu, reader, dictionary, Sasayaki, Anki, and sync behavior follow Hoshi Reader iOS / Android where it makes sense for a terminal. The dictionary layer does not directly link the `hoshidicts-kotlin-bridge` JNI library; it is a Python/SQLite terminal implementation, with Term / Frequency / Pitch result structure, long-text scanning, and deinflection behavior kept aligned with upstream `hoshidicts` where practical.
-
 ## License
 
-Distributed under the MIT License. See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE).

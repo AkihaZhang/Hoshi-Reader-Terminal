@@ -93,7 +93,7 @@ def render_page(
     status = [style(f"Sasayaki: {sasayaki_status}", CYAN)] if sasayaki_status else []
     footer = "\n".join(
         [
-            style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放/暂停    r 排版    y 详情    q 退出", DIM),
+            style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放    c 章节    y 有声书    q 退出", DIM),
             style("输入 /読みました 查词    输入 a 読む 制卡    输入 h 备注内容 划线", DIM),
         ]
     )

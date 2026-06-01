@@ -33,7 +33,7 @@ from .dictionary import (
     format_results,
     normalize_dictionary_type,
 )
-from .epub import extract_book
+from .epub import ExtractedBook, extract_book
 from .reader import Page, character_count, page_for_position, paginate, render_page, sentence_around
 from .sasayaki import (
     SasayakiMatch,
@@ -54,7 +54,7 @@ from .sasayaki import (
     previous_cue,
 )
 from .storage import BookRecord, Library, summarize_text_progress
-from .sync import sync_library
+from .sync import TTU_ROOT, sync_book, sync_library
 from .terminal import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, YELLOW, banner, clear_screen, style, terminal_size
 from .updates import check_for_updates, format_update_info, format_update_install_result, install_latest_update
 
@@ -83,8 +83,10 @@ UI_TEXT = {
     "main_back": {"zh": "返回主菜单", "en": "Back to Main Menu", "ja": "メインメニューへ戻る"},
     "shelf": {"zh": "书架", "en": "Shelf", "ja": "本棚"},
     "shelf_read": {"zh": "书架 / 阅读", "en": "Shelf / Read", "ja": "本棚 / 読む"},
-    "import_epub": {"zh": "导入 EPUB", "en": "Import EPUB", "ja": "EPUB をインポート"},
+    "import_epub": {"zh": "导入文件", "en": "Import File", "ja": "ファイルをインポート"},
+    "import_folder": {"zh": "导入文件夹", "en": "Import Folder", "ja": "フォルダをインポート"},
     "read": {"zh": "阅读", "en": "Read", "ja": "読む"},
+    "manage_books": {"zh": "管理书籍", "en": "Manage Books", "ja": "本を管理"},
     "book_settings": {"zh": "书库设置", "en": "Book Settings", "ja": "本棚設定"},
     "search": {"zh": "搜索", "en": "Search", "ja": "検索"},
     "import_dictionary": {"zh": "导入辞典", "en": "Import Dictionary", "ja": "辞書をインポート"},
@@ -280,24 +282,29 @@ def cmd_read(args: argparse.Namespace) -> int:
     record: BookRecord | None = None
     title: str
     text: str
+    chapter_marks: list[tuple[str, int]] = []
 
     target_path = Path(args.target).expanduser() if args.target else None
     if target_path and target_path.exists():
         extracted = extract_book(target_path)
         title = extracted.title
         text = extracted.text
+        chapter_marks = _chapter_marks_from_extracted(extracted)
     else:
         record = _find_book_for_input(library, args.target)
         if record is None:
             raise ValueError("找不到这本书。可以先运行 `shelf` / `书架`，或直接传文件路径。")
-        title, text = library.load_record_text(record)
+        extracted = extract_book(Path(record.stored_path))
+        title = record.title or extracted.title
+        text = extracted.text
+        chapter_marks = _chapter_marks_from_extracted(extracted)
 
     pages = paginate(text, width=args.width, lines_per_page=args.lines)
     start_page = page_for_position(pages, record.position if record else 0)
     if args.print_only or not sys.stdin.isatty():
         print(render_page(title, pages[start_page], len(pages), vertical=args.vertical))
         return 0
-    return interactive_loop(title, text, pages, record, args.vertical, start_page=start_page)
+    return interactive_loop(title, text, pages, record, args.vertical, start_page=start_page, chapter_marks=chapter_marks)
 
 
 def cmd_lookup(args: argparse.Namespace) -> int:
@@ -930,6 +937,45 @@ def _reader_sasayaki_status_text(cue: SasayakiMatch | None, match: SasayakiMatch
     return f"{prefix}{format_time(cue.start_time)}  {cue.text}"
 
 
+def _reader_chapter_panel(
+    title: str,
+    pages: list[Page],
+    current_index: int,
+    chapter_marks: list[tuple[str, int]],
+) -> int:
+    print(clear_screen(), end="")
+    total_chars = pages[-1].end_char if pages else 0
+    current_char = pages[current_index].start_char if pages else 0
+    print(style("章节", BOLD), title)
+    print(f"当前位置: {current_char} / {total_chars} ({current_index + 1}/{len(pages)} 页)")
+    if not chapter_marks:
+        print("这本书没有可用章节信息。")
+    else:
+        for index, (label, position) in enumerate(chapter_marks[:80], start=1):
+            page_number = page_for_position(pages, position) + 1
+            marker = ">" if position <= current_char else " "
+            print(f"{marker} {index:>2}. p{page_number:<4} {position:>7}  {label}")
+        if len(chapter_marks) > 80:
+            print(style(f"... 还有 {len(chapter_marks) - 80} 个章节未显示", DIM))
+    raw = _read_input("输入章节序号，或 j 字符位置（留空返回）：").strip()
+    if not raw:
+        return current_index
+    if raw.isdigit() and chapter_marks:
+        index = int(raw)
+        if 1 <= index <= len(chapter_marks):
+            return page_for_position(pages, chapter_marks[index - 1][1])
+    if raw.startswith("j "):
+        try:
+            target = int(raw[2:].strip())
+        except ValueError:
+            target = -1
+        if target >= 0:
+            return page_for_position(pages, target)
+    print("章节输入无效。")
+    _pause()
+    return current_index
+
+
 def _flash_message(message: str, seconds: float = 0.45) -> None:
     print(style(message, YELLOW))
     time.sleep(seconds)
@@ -942,6 +988,7 @@ def interactive_loop(
     record: BookRecord | None,
     vertical: bool = False,
     start_page: int = 0,
+    chapter_marks: list[tuple[str, int]] | None = None,
 ) -> int:
     library = Library()
     page_index = start_page
@@ -1014,6 +1061,10 @@ def interactive_loop(
                 vertical = not vertical
             elif command == "y":
                 _reader_sasayaki_panel(library, record, page, sasayaki_player)
+            elif command == "c":
+                page_index = _reader_chapter_panel(title, pages, page_index, chapter_marks or [])
+                if not sasayaki_player.is_playing():
+                    current_cue = None
             elif command.startswith("/"):
                 word = command[1:].strip()
                 if word:
@@ -1100,7 +1151,9 @@ def books_menu() -> int:
         print(style(_ui("books", library), BOLD))
         print(f"1. {_ui('shelf_read', library)}")
         print(f"2. {_ui('import_epub', library)}")
-        print(f"3. {_ui('book_settings', library)}")
+        print(f"3. {_ui('import_folder', library)}")
+        print(f"4. {_ui('manage_books', library)}")
+        print(f"5. {_ui('book_settings', library)}")
         print(f"0. {_ui('back', library)}")
         choice = _read_input(style(_ui("choose", library), CYAN)).strip()
         if choice == "1":
@@ -1108,6 +1161,10 @@ def books_menu() -> int:
         elif choice == "2":
             _menu_import_book()
         elif choice == "3":
+            _settings_import_books()
+        elif choice == "4":
+            _book_management_menu()
+        elif choice == "5":
             _bookshelf_settings()
         elif choice in {"0", "q", "Q", "返回", "back"}:
             return 0
@@ -1212,16 +1269,118 @@ def _menu_shelf_read() -> None:
     _pause("已返回。按 Enter 继续")
 
 
+def _book_management_menu() -> None:
+    while True:
+        library = Library()
+        books = _sorted_books(library)
+        if not books:
+            print("书架是空的。")
+            _pause()
+            return
+        print(style("管理书籍", BOLD))
+        _print_book_choices(books)
+        query = _read_input("输入书籍序号、标题片段或 id（留空返回）：").strip()
+        if not query:
+            return
+        record = _find_book_for_input(library, query)
+        if record is None:
+            print("找不到这本书。")
+            _pause()
+            continue
+        _book_action_menu(record)
+
+
+def _book_action_menu(record: BookRecord) -> None:
+    while True:
+        library = Library()
+        current = _find_book_for_input(library, record.id)
+        if current is None:
+            print("这本书已经不在书架里。")
+            _pause()
+            return
+        record = current
+        print(style(record.title, BOLD))
+        print(f"id: {record.id}")
+        print(f"文件: {record.stored_path}")
+        print(f"进度: {summarize_text_progress(record.position, _safe_text_for_progress(record))}")
+        print("1. 重命名")
+        print("2. 删除")
+        print("3. 标记已读")
+        print("4. 同步本书进度")
+        print("5. 匹配 Sasayaki 有声书")
+        print("0. 返回")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            title = _read_input("新标题：").strip()
+            if library.rename_book(record.id, title):
+                print(style("已重命名", GREEN), title)
+            else:
+                print(style("重命名失败。", RED))
+            _pause()
+        elif choice == "2":
+            confirm = _read_input(f"确认删除《{record.title}》？输入 y 删除：").strip().lower()
+            if confirm == "y":
+                if library.delete_book(record.id):
+                    print(style("已删除", GREEN), record.title)
+                    _pause()
+                    return
+                print(style("删除失败。", RED))
+                _pause()
+        elif choice == "3":
+            if library.mark_book_read(record.id):
+                print(style("已标记为已读", GREEN), record.title)
+            else:
+                print(style("标记失败。", RED))
+            _pause()
+        elif choice == "4":
+            sync_root = Path(library.settings["sync_path"]).expanduser() / TTU_ROOT
+            sync_root.mkdir(parents=True, exist_ok=True)
+            print(sync_book(library, record, sync_root, "auto"))
+            _pause()
+        elif choice == "5":
+            srt = _read_input("SRT 路径（留空返回）：").strip().strip('"')
+            if not srt:
+                continue
+            audio = _read_input("音频路径或 URL（可留空）：").strip().strip('"') or None
+            window = _read_input("搜索窗口（默认 200）：").strip()
+            try:
+                _sasayaki_match(
+                    library,
+                    record,
+                    srt,
+                    audio_path=audio,
+                    search_window=int(window) if window else 200,
+                )
+            except Exception as exc:
+                print(style(f"Sasayaki 匹配失败：{exc}", RED))
+            _pause()
+        elif choice in {"0", "q", "Q", "返回"}:
+            return
+        else:
+            print("没有这个书籍操作。")
+            _pause()
+
+
 def _open_book_record(library: Library, record: BookRecord) -> None:
     try:
-        title, text = library.load_record_text(record)
+        extracted = extract_book(Path(record.stored_path))
     except Exception as exc:
         print(style(f"打开失败：{exc}", RED))
         return
+    title = record.title or extracted.title
+    text = extracted.text
     pages = paginate(text)
     start_page = page_for_position(pages, record.position)
     vertical = library.settings["reader_vertical"] == "true"
-    interactive_loop(title, text, pages, record, vertical, start_page=start_page)
+    interactive_loop(
+        title,
+        text,
+        pages,
+        record,
+        vertical,
+        start_page=start_page,
+        chapter_marks=_chapter_marks_from_extracted(extracted),
+    )
 
 
 def _menu_lookup() -> None:
@@ -1995,6 +2154,21 @@ def find_book_files(root: Path) -> list[Path]:
     return sorted(files, key=lambda item: str(item).lower())
 
 
+def _chapter_marks_from_extracted(book: ExtractedBook) -> list[tuple[str, int]]:
+    marks: list[tuple[str, int]] = []
+    cursor = 0
+    for index, chapter in enumerate(book.chapters, start=1):
+        text = chapter.text.strip()
+        if not text:
+            continue
+        label = chapter.title.strip() or f"Chapter {index}"
+        marks.append((label, cursor))
+        cursor += len(text) + 2
+    if len(marks) <= 1:
+        return []
+    return marks
+
+
 def _sorted_books(library: Library) -> list[BookRecord]:
     return sorted(library.books, key=lambda item: item.last_access, reverse=True)
 
@@ -2058,7 +2232,7 @@ def _read_reader_command(prompt: str = "", timeout: float | None = None) -> str 
     if command in {"right", "down", "left", "up", "space", ""}:
         print()
         return command
-    if command in {"r", "v", "y", "s", "q"}:
+    if command in {"r", "v", "y", "c", "s", "q"}:
         print(command)
         return command
     if command == "/":

@@ -2,9 +2,9 @@
 
 [English](README.md) | **简体中文**
 
-一个受 [Hoshi Reader iOS](https://github.com/Manhhao/Hoshi-Reader) 和 [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android) 启发的终端日语 EPUB 阅读器，支持书库、Yomitan 查词、Sasayaki 有声书、Anki 制卡、阅读统计和本地进度同步。
+Hoshi Reader Terminal 是一个能在 Windows、macOS 和 Linux 终端里运行的日语阅读器。它提供书库、分页阅读、Yomitan 查词、Anki 制卡、Sasayaki 有声书匹配、阅读统计和本地 TTU 风格进度同步。
 
-Hoshi Reader Terminal 面向真正的赛博苦行僧：它把小说阅读、查词和制卡全部塞进终端，彻底修复了 Hoshi Reader 过于好用的设计缺陷。
+终端版会参考 Hoshi Reader iOS 和 Android 的功能结构，只保留在终端里有意义、能稳定使用的交互。
 
 <p align="center">
   <img src="docs/images/01-menu.svg" alt="主菜单" width="760">
@@ -24,77 +24,21 @@ Hoshi Reader Terminal 面向真正的赛博苦行僧：它把小说阅读、查�
 
 ## 功能
 
-### 书库
-
-- 支持导入 `.epub`、`.txt`、`.md`、`.html`、`.xhtml`。
-- 书架就是阅读入口：打开书架后输入数字序号、标题片段或 id 直接进入阅读。
-- 保存阅读进度、阅读统计、划线和备注。
-- 可以在终端菜单里设置默认小说目录。
-
-### 阅读
-
-- 在终端里分页阅读。
-- 支持横排和终端竖排显示；竖排按终端 cell 宽度排布，汉字/假名按双宽，常见日文标点用半宽形态对齐。
-- 阅读器底部直接显示可照抄的输入例子：
-  - `/読みました` 查词
-  - `a 読む` 制卡
-  - `h 备注` 划线备注
-
-### 查词
-
-- 支持导入 Yomitan Term / Frequency / Pitch 三类词典目录或 zip。
-- 查词结果使用终端彩色 badge 区分频率、音高、标签和词典标题，尽量贴近 Hoshi 原版弹窗的层级感。
-- 可以启用、停用词典，并调整同类词典的查词优先级。
-- 可以从查词菜单、命令行、阅读器内部查词。
-- 查词结果支持分页，用方向键翻页，并可在结果页继续 `/词` 递归查词。
-- 带简单日语活用还原，覆盖常见礼貌形和过去式。
-
-### Sasayaki 有声书
-
-- 复用上游 Sasayaki 的核心流程：解析 SubPlz 生成的 `.srt`，过滤 EPUB/文本正文，按顺序匹配台词并显示匹配率。
-- 支持保存每本书的 SRT、本地或在线音频、播放位置、延迟和倍速。
-- 阅读器主界面里 `←/→` 翻页，`↑/↓` 控制 Sasayaki 上一句/下一句，`Enter` 或空格播放/暂停当前台词；按 `y` 可以查看当前页匹配台词和详细控制。
-- 播放时会按当前台词高亮句子；播放器可返回时间时会跟随音频自动切页。
-- 命令行可用 `sasayaki list/play` 查看或播放，`sasayaki play --line` 只播放单条台词时间范围。
-- 音频播放优先调用 `mpv`，其次 `ffplay`；倍速播放会为 `ffplay` 自动生成 `atempo` filter 链，没有可 seek 的播放器时退回系统默认打开。
-
-### Anki 制卡
-
-- 可以写入 CSV。
-- AnkiConnect 可用时可以直接发卡。
-- 默认采用 Hoshi Android 的 Lapis 字段映射：`ExpressionAudio` 使用词语音频，`SentenceAudio` 使用 Sasayaki 句子音频。
-- 词语音频支持 Hoshi 在线音频源和 Ankiconnect Android `android.db` 本地音频库；本地库路径可在设置里调整。
-- 可以在设置里调整牌组、模板、字段、标签、音频源和 AnkiConnect URL。
-
-### 同步和备份
-
-- 可以通过本地 `ttu-reader-data` 风格同步目录导出/导入进度和统计。
-- 备份文件会生成到数据目录外面，不会再把正在生成的备份 zip 打进自己里面。
-
-### 界面
-
-- 输入 `hoshi` 启动主菜单。
+- 以书库为阅读入口：导入书籍后从书架打开，也可以在书籍上下文里重命名、删除、标记已读、同步单本进度或启动 Sasayaki 匹配。
+- 支持 `.epub`、`.txt`、`.md`、`.html`、`.xhtml`。
+- 终端分页阅读，支持方向键翻页、查词、制卡、划线、备注、统计、横排和终端竖排。
+- 支持导入 Yomitan Term / Frequency / Pitch 三类词典 zip 或目录。
+- 支持词典优先级调整、启用/停用、查词结果分页、递归查词和彩色终端 badge。
+- 支持 Sasayaki：SubPlz `.srt` 匹配、本地或在线音频、上一句/下一句、句子高亮、播放位置、延迟和倍速。
+- 支持 CSV 制卡和 AnkiConnect 制卡，默认字段按 Hoshi/Lapis 风格配置。
+- 词语音频支持在线音频源，也支持 Ankiconnect Android `android.db` 本地音频库。
+- 支持本地 `ttu-reader-data` 风格进度和统计同步。
 - 界面标签支持简体中文、English、日本語。
-- 使用参考 Hoshi 图标的 neofetch 风格终端 logo。
-- 支持在线检查 GitHub Release 更新，也可以直接更新当前便携安装。
+- 支持检查 GitHub Release 更新，也可以更新当前便携安装。
 
-## 下载
+## 安装
 
-从 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.13) 下载便携包。推荐用下面的一键脚本安装；zip/tar 便携包本身需要 Python 3.10+。
-
-| 系统 | 安装包 |
-| --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.13-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.13-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.13-linux.tar.gz` |
-
-安装后运行：
-
-```bash
-hoshi
-```
-
-## 一键安装
+推荐使用一键安装脚本：
 
 ```bash
 # macOS / Linux
@@ -106,77 +50,49 @@ curl -fsSL https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/d
 irm https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download/install.ps1 | iex
 ```
 
-脚本会下载最新 release 的对应系统包并安装 `hoshi` 命令。运行需要 Python 3.10+；如果缺少 Python，脚本会给出提示。
-
-## 命令
-
-```text
-菜单                         打开主菜单
-导入 PATH                    导入书籍
-书架                         查看书架；TTY 下可输入序号阅读
-阅读 TARGET                  按序号、id、标题片段或路径阅读
-查词 WORD                    查词
-导入词典 PATH                导入 Yomitan 词典 zip 或目录
-词典列表 [TYPE]              查看 Term / Frequency / Pitch 词典
-词典排序 TYPE FROM TO        调整同类词典优先级
-词典开关 TYPE INDEX [状态]   启用或停用词典
-制卡 WORD                    写入 CSV 或发送到 AnkiConnect
-统计                         查看阅读统计
-同步 [auto|export|import]    同步阅读进度
-sasayaki status BOOK         查看有声书匹配状态
-sasayaki match BOOK SRT      匹配 SRT，可加 --audio 音频
-sasayaki list/play BOOK      查看或播放匹配台词
-sasayaki play BOOK --line    只播放当前台词时间范围
-设置                         打开设置
-诊断                         检查运行环境
-检查更新                     在线检查新版本
-更新 [-y]                    下载 Release 包并替换当前 pyz
-```
-
-英文命令 `menu`, `import`, `shelf`, `read`, `lookup`, `dict-import`, `card`, `stats`, `sync`, `settings`, `doctor`, `update` 也可用。只想看版本不安装时运行 `hoshi update --check`。
-
-## 从源码运行
+安装后运行：
 
 ```bash
-python3 -m pip install -e .
 hoshi
 ```
 
-不安装直接运行：
+三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.14)：
 
-```bash
-python3 -m hoshi_terminal menu
+| 系统 | 安装包 |
+| --- | --- |
+| Windows | `Hoshi-Reader-Terminal-0.1.14-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.14-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.14-linux.tar.gz` |
+
+运行需要 Python 3.10 或更高版本。
+
+## 常用命令
+
+```text
+hoshi                         打开终端菜单
+hoshi 导入 PATH               导入书籍
+hoshi 书架                    查看书架；输入数字阅读
+hoshi 阅读 TARGET             按序号、id、标题片段或路径阅读
+hoshi 查词 WORD               查词
+hoshi 导入词典 PATH           导入 Yomitan 词典
+hoshi 词典列表 [TYPE]         查看 Term / Frequency / Pitch 词典
+hoshi 词典排序 TYPE FROM TO   调整词典优先级
+hoshi 制卡 WORD               写入 CSV 或发送到 AnkiConnect
+hoshi 同步 [auto|export|import]
+hoshi 有声书 status BOOK
+hoshi 有声书 match BOOK SRT --audio AUDIO
+hoshi 设置
+hoshi 检查更新 --check
+hoshi 更新 -y
 ```
+
+英文命令 `menu`, `import`, `shelf`, `read`, `lookup`, `dict-import`, `card`, `stats`, `sync`, `sasayaki`, `settings`, `doctor`, and `update` 也可用。
 
 ## 数据目录
 
 - Windows: `%APPDATA%\HoshiReaderTerminal`
 - macOS: `~/Library/Application Support/HoshiReaderTerminal`
 - Linux: `~/.local/share/hoshi-reader-terminal`
-
-便携运行：
-
-```bash
-HOSHI_TERMINAL_HOME=.hoshi-terminal python3 -m hoshi_terminal 书架
-```
-
-## 开发
-
-```bash
-python3 -m unittest discover -s tests
-python3 scripts/generate_readme_assets.py
-python3 scripts/build_packages.py
-```
-
-发布包可以用 `scripts/build_packages.py` 生成。Release 上传三系统便携包和一键安装脚本。
-
-## 隐私和数据
-
-Hoshi Reader Terminal 会把导入的书、词典、制卡 CSV、阅读进度、划线、统计和设置保存在本地数据目录。同步只使用用户设置的本地文件夹。Anki 制卡只会访问你设置的 AnkiConnect 地址。
-
-## 致谢
-
-菜单、阅读、辞典、Sasayaki、Anki 和同步的轮廓参考 Hoshi Reader iOS / Android。词典层目前不是直接链接 `hoshidicts-kotlin-bridge` 的 JNI 库，而是用 Python/SQLite 做跨平台终端实现；Term / Frequency / Pitch 的结果结构、长文本扫描和活用还原会继续对齐上游 `hoshidicts` 能在终端里复用的行为。
 
 ## License
 
