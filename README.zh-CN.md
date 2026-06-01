@@ -33,7 +33,7 @@ Hoshi Reader Terminal 是一个能在 Windows、macOS 和 Linux 终端里运行�
 - 支持 CSV 制卡和 AnkiConnect 制卡，默认字段按 Hoshi/Lapis 风格配置。
 - 词语音频支持在线音频源，也支持 Ankiconnect Android `android.db` 本地音频库。
 - 支持本地 `ttu-reader-data` 风格进度和统计同步。
-- 界面标签支持简体中文、English、日本語。
+- 界面标签支持简体中文和 English。
 - 支持检查 GitHub Release 更新，也可以更新当前便携安装。
 
 ## 安装
@@ -56,13 +56,13 @@ irm https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download
 hoshi
 ```
 
-三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.14)：
+三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.15)：
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.14-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.14-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.14-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.15-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.15-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.15-linux.tar.gz` |
 
 运行需要 Python 3.10 或更高版本。
 

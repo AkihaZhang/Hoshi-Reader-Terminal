@@ -46,7 +46,7 @@ class CliTests(unittest.TestCase):
     def test_language_names(self) -> None:
         self.assertEqual(_language_name("zh"), "简体中文")
         self.assertEqual(_language_name("en"), "English")
-        self.assertEqual(_language_name("ja"), "日本語")
+        self.assertEqual(_language_name("ja"), "简体中文")
 
     def test_reader_arrow_keys_are_commands(self) -> None:
         self.assertEqual(_normalize_reader_key("\x1b[C"), "right")

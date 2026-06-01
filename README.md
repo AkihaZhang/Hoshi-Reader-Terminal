@@ -33,7 +33,7 @@ It follows the structure of Hoshi Reader iOS and Android where terminal interact
 - CSV card export and AnkiConnect card creation with Hoshi/Lapis-style default fields.
 - Word audio from online sources or an Ankiconnect Android `android.db` local audio database.
 - Local progress/statistics sync using a `ttu-reader-data` style folder.
-- Simplified Chinese, English, and Japanese interface labels.
+- Simplified Chinese and English interface labels.
 - GitHub Release update checks and in-place portable updates.
 
 ## Install
@@ -56,13 +56,13 @@ Then run:
 hoshi
 ```
 
-Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.14):
+Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.15):
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.14-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.14-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.14-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.15-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.15-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.15-linux.tar.gz` |
 
 Python 3.10+ is required.
 

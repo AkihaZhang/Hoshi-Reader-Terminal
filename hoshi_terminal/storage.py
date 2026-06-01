@@ -124,6 +124,8 @@ class Library:
         raw.setdefault("audio_local_db_path", str(self.root / DEFAULT_LOCAL_AUDIO_PATH))
         raw.setdefault("reader_vertical", "false")
         raw.setdefault("language", "zh")
+        if raw.get("language") not in {"zh", "en"}:
+            raw["language"] = "zh"
         return {str(key): str(value) for key, value in raw.items()}
 
     def set_setting(self, key: str, value: str | Path) -> None:

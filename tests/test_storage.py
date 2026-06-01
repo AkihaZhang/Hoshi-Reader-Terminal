@@ -6,6 +6,15 @@ from hoshi_terminal.storage import Library
 
 
 class StorageTests(unittest.TestCase):
+    def test_removed_language_settings_fall_back_to_chinese(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            library = Library(Path(temp_dir) / "state")
+            library.set_setting("language", "ja")
+
+            reloaded = Library(Path(temp_dir) / "state")
+
+            self.assertEqual(reloaded.settings["language"], "zh")
+
     def test_book_management_renames_marks_read_and_deletes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
