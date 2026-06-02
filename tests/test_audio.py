@@ -1,4 +1,5 @@
 from pathlib import Path
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -43,11 +44,12 @@ class AudioTests(unittest.TestCase):
     def test_local_audio_repository_reads_android_db(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "android.db"
-            with sqlite3.connect(db_path) as db:
+            with closing(sqlite3.connect(db_path)) as db:
                 db.execute("CREATE TABLE entries(source TEXT, expression TEXT, reading TEXT, file TEXT)")
                 db.execute("CREATE TABLE android(source TEXT, file TEXT, data BLOB)")
                 db.execute("INSERT INTO entries VALUES ('nhk16', '星', 'ほし', 'audio/hoshi.mp3')")
                 db.execute("INSERT INTO android VALUES ('nhk16', 'audio/hoshi.mp3', ?)", (b'audio',))
+                db.commit()
 
             asset = LocalAudioRepository(db_path).resolve_asset("星", "ホシ")
 

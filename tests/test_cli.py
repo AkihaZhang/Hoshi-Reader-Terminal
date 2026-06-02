@@ -8,13 +8,22 @@ from unittest.mock import patch
 
 from hoshi_terminal.cli import (
     _chapter_marks_from_extracted,
+    _chapter_mark_index_for_position,
     _find_book_for_input,
+    _is_toc_command,
+    interactive_loop,
     _language_name,
     _normalize_reader_key,
+    _parse_page_number,
+    _reader_highlights_panel,
+    _reader_search_panel,
+    _reader_toc_panel,
+    _toc_initial_command,
     create_backup,
     main,
 )
 from hoshi_terminal.epub import Chapter, ExtractedBook
+from hoshi_terminal.reader import Page
 from hoshi_terminal.storage import Library
 
 
@@ -43,6 +52,23 @@ class CliTests(unittest.TestCase):
         self.assertEqual(selected_second.title, "First")
         self.assertEqual(selected_recent.title, "Second")
 
+    def test_book_selection_respects_title_sort_setting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            zeta = root / "zeta.txt"
+            alpha = root / "alpha.txt"
+            zeta.write_text("zeta", encoding="utf-8")
+            alpha.write_text("alpha", encoding="utf-8")
+            library = Library(root / "state")
+            library.import_book(zeta, title="Zeta")
+            library.import_book(alpha, title="Alpha")
+            library.set_setting("bookshelf_sort", "title")
+
+            selected_first = _find_book_for_input(library, "1")
+
+        self.assertIsNotNone(selected_first)
+        self.assertEqual(selected_first.title, "Alpha")
+
     def test_language_names(self) -> None:
         self.assertEqual(_language_name("zh"), "简体中文")
         self.assertEqual(_language_name("en"), "English")
@@ -64,6 +90,149 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertEqual(_chapter_marks_from_extracted(book), [("One", 0), ("Two", 5)])
+
+    def test_toc_panel_jumps_to_chapter_number(self) -> None:
+        pages = [
+            Page(0, 0, 49, "one"),
+            Page(1, 50, 99, "two"),
+            Page(2, 100, 149, "three"),
+        ]
+        marks = [("One", 0), ("Two", 50), ("Three", 100)]
+        output = StringIO()
+
+        with (
+            patch("builtins.input", return_value="3"),
+            patch("sys.stdout", output),
+            patch.dict(os.environ, {"NO_COLOR": "1"}),
+        ):
+            index = _reader_toc_panel("Book", pages, 0, marks)
+
+        self.assertEqual(index, 2)
+        self.assertIn("目录", output.getvalue())
+        self.assertIn("3. p3", output.getvalue())
+
+    def test_toc_panel_accepts_prefilled_chapter_number(self) -> None:
+        pages = [
+            Page(0, 0, 49, "one"),
+            Page(1, 50, 99, "two"),
+            Page(2, 100, 149, "three"),
+        ]
+        marks = [("One", 0), ("Two", 50), ("Three", 100)]
+        output = StringIO()
+
+        with (
+            patch("sys.stdout", output),
+            patch.dict(os.environ, {"NO_COLOR": "1"}),
+        ):
+            index = _reader_toc_panel("Book", pages, 0, marks, initial_command="3")
+
+        self.assertEqual(index, 2)
+        self.assertIn("目录页", output.getvalue())
+
+    def test_toc_shortcut_accepts_pasted_number(self) -> None:
+        self.assertTrue(_is_toc_command("t"))
+        self.assertTrue(_is_toc_command("c"))
+        self.assertTrue(_is_toc_command("t3"))
+        self.assertEqual(_toc_initial_command("t3"), "3")
+
+    def test_reader_loop_opens_toc_and_jumps(self) -> None:
+        pages = [
+            Page(0, 0, 49, "one"),
+            Page(1, 50, 99, "two"),
+            Page(2, 100, 149, "three"),
+        ]
+        marks = [("One", 0), ("Two", 50), ("Three", 100)]
+        output = StringIO()
+
+        with (
+            patch("hoshi_terminal.cli._read_reader_command", side_effect=["t", "q"]),
+            patch("hoshi_terminal.cli._read_toc_command", return_value="2"),
+            patch("sys.stdout", output),
+            patch.dict(os.environ, {"NO_COLOR": "1"}),
+        ):
+            code = interactive_loop("Book", "one\ntwo\nthree", pages, record=None, start_page=0, chapter_marks=marks)
+
+        text = output.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("目录", text)
+        self.assertIn("Book  第 2/3 页", text)
+
+    def test_toc_active_mark_uses_current_position(self) -> None:
+        marks = [("One", 0), ("Two", 50), ("Three", 100)]
+
+        self.assertEqual(_chapter_mark_index_for_position(marks, 0), 0)
+        self.assertEqual(_chapter_mark_index_for_position(marks, 75), 1)
+        self.assertEqual(_chapter_mark_index_for_position(marks, 150), 2)
+
+    def test_reader_search_panel_jumps_to_result_number(self) -> None:
+        text = "alpha one\nbeta first\nmiddle\nbeta second"
+        pages = [
+            Page(0, 0, 18, "alpha one\nbeta first"),
+            Page(1, 19, len(text), "middle\nbeta second"),
+        ]
+        output = StringIO()
+
+        with (
+            patch("builtins.input", return_value="2"),
+            patch("sys.stdout", output),
+            patch.dict(os.environ, {"NO_COLOR": "1"}),
+        ):
+            index = _reader_search_panel("Book", text, pages, 0, initial_query="beta")
+
+        self.assertEqual(index, 1)
+        self.assertIn("正文搜索", output.getvalue())
+        self.assertIn("命中: 2", output.getvalue())
+
+    def test_reader_loop_search_shortcut_jumps_to_result(self) -> None:
+        text = "alpha one\nbeta first\nmiddle\nbeta second"
+        pages = [
+            Page(0, 0, 18, "alpha one\nbeta first"),
+            Page(1, 19, len(text), "middle\nbeta second"),
+        ]
+        output = StringIO()
+
+        with (
+            patch("hoshi_terminal.cli._read_reader_command", side_effect=["f beta", "q"]),
+            patch("hoshi_terminal.cli._read_search_command", return_value="2"),
+            patch("sys.stdout", output),
+            patch.dict(os.environ, {"NO_COLOR": "1"}),
+        ):
+            code = interactive_loop("Book", text, pages, record=None, start_page=0)
+
+        self.assertEqual(code, 0)
+        self.assertIn("正文搜索", output.getvalue())
+        self.assertIn("Book  第 2/2 页", output.getvalue())
+
+    def test_highlights_panel_jumps_to_saved_position(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            book = root / "book.txt"
+            text = "alpha one\nbeta first\nmiddle\nbeta second"
+            book.write_text(text, encoding="utf-8")
+            library = Library(root / "state")
+            record = library.import_book(book, title="Book")
+            library.add_highlight(record, "beta second", "note", position=text.find("beta second"))
+            pages = [
+                Page(0, 0, 18, "alpha one\nbeta first"),
+                Page(1, 19, len(text), "middle\nbeta second"),
+            ]
+            output = StringIO()
+
+            with (
+                patch("builtins.input", return_value="1"),
+                patch("sys.stdout", output),
+                patch.dict(os.environ, {"NO_COLOR": "1"}),
+            ):
+                index = _reader_highlights_panel(library, record, text, pages, 0)
+
+        self.assertEqual(index, 1)
+        self.assertIn("划线 / 备注", output.getvalue())
+        self.assertIn("note", output.getvalue())
+
+    def test_percent_goto_is_supported(self) -> None:
+        self.assertEqual(_parse_page_number("1", 5), 0)
+        self.assertEqual(_parse_page_number("50%", 5), 2)
+        self.assertEqual(_parse_page_number("100%", 5), 4)
 
     def test_no_args_opens_menu(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

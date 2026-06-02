@@ -5,6 +5,7 @@ from hoshi_terminal.reader import (
     Page,
     character_count,
     highlight_sentence,
+    page_for_position,
     paginate,
     render_page,
     render_vertical,
@@ -18,6 +19,17 @@ class ReaderTests(unittest.TestCase):
     def test_paginate_returns_pages(self) -> None:
         pages = paginate("星 " * 200, width=20, lines_per_page=4)
         self.assertGreater(len(pages), 1)
+
+    def test_page_for_position_prefers_page_start_boundary(self) -> None:
+        pages = [
+            Page(0, 0, 10, "first"),
+            Page(1, 10, 20, "second"),
+            Page(2, 20, 30, "third"),
+        ]
+
+        self.assertEqual(page_for_position(pages, 10), 1)
+        self.assertEqual(page_for_position(pages, 20), 2)
+        self.assertEqual(page_for_position(pages, 30), 2)
 
     def test_character_count_ignores_whitespace(self) -> None:
         self.assertEqual(character_count("星 \n 読む"), 3)
@@ -43,7 +55,7 @@ class ReaderTests(unittest.TestCase):
         self.assertIn("←/→ 翻页", rendered)
         self.assertIn("↑/↓ Sasayaki", rendered)
         self.assertIn("Enter/Space 播放", rendered)
-        self.assertIn("c 章节", rendered)
+        self.assertIn("t/c 目录", rendered)
         self.assertNotIn("→/↓ 下一页", rendered)
         self.assertNotIn("←/↑ 上一页", rendered)
         self.assertNotIn("Enter/n", rendered)
@@ -75,6 +87,7 @@ class ReaderTests(unittest.TestCase):
 
         self.assertIn("book", rendered)
         self.assertIn("←/→ 翻页", rendered)
+        self.assertIn("t/c 目录", rendered)
         self.assertIn("48;2;188;216;225", rendered)
         self.assertNotIn("48;2;238;224;201", rendered)
         self.assertNotIn("书籍 │ 词典 │ 设置", rendered)

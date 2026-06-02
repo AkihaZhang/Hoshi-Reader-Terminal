@@ -24,9 +24,10 @@ It follows the structure of Hoshi Reader iOS and Android where terminal interact
 
 ## Features
 
-- Bookshelf-first reading: import books, open books from the shelf, rename/delete books, mark books as read, sync one book, or start Sasayaki matching from the book context.
+- Bookshelf-first reading: import books, open books from the shelf, use custom shelves, unshelved and reading sections, and sort by recent access or title.
+- Book context actions for rename/delete, mark-as-read, moving between shelves, one-book sync, and Sasayaki matching.
 - Supports `.epub`, `.txt`, `.md`, `.html`, and `.xhtml`.
-- Terminal reader with arrow-key page turns, lookup, card creation, highlights, notes, statistics, horizontal layout, and terminal vertical layout.
+- Terminal reader with arrow-key page turns, table-of-contents jumps, in-book search, lookup, card creation, highlights, notes, highlight-list jumps, statistics, horizontal layout, and terminal vertical layout.
 - Yomitan Term / Frequency / Pitch dictionary import from zip files or folders.
 - Dictionary priority controls, enable/disable toggles, paginated lookup results, recursive lookup, and color-coded terminal badges.
 - Sasayaki flow for SubPlz `.srt` matching, local or online audio, cue navigation, cue highlighting, playback position, delay, and speed.
@@ -56,13 +57,13 @@ Then run:
 hoshi
 ```
 
-Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.17):
+Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.18):
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.17-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.17-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.17-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.18-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.18-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.18-linux.tar.gz` |
 
 Python 3.10+ is required.
 

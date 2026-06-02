@@ -96,6 +96,25 @@ class Library:
         return [DailyStatistic.from_dict(item) for item in self._state.get("statistics", [])]
 
     @property
+    def shelves(self) -> list[dict[str, object]]:
+        raw = self._state.setdefault("shelves", [])
+        if not isinstance(raw, list):
+            raw = []
+            self._state["shelves"] = raw
+        shelves: list[dict[str, object]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            book_ids = item.get("book_ids", item.get("bookIds", []))
+            if not isinstance(book_ids, list):
+                book_ids = []
+            shelves.append({"name": name, "book_ids": [str(book_id) for book_id in book_ids]})
+        return shelves
+
+    @property
     def settings(self) -> dict[str, str]:
         raw = self._state.setdefault("settings", {})
         if not isinstance(raw, dict):
@@ -123,6 +142,10 @@ class Library:
         raw.setdefault("audio_enable_local", "false")
         raw.setdefault("audio_local_db_path", str(self.root / DEFAULT_LOCAL_AUDIO_PATH))
         raw.setdefault("reader_vertical", "false")
+        raw.setdefault("bookshelf_show_reading", "false")
+        raw.setdefault("bookshelf_sort", "recent")
+        if raw.get("bookshelf_sort") not in {"recent", "title"}:
+            raw["bookshelf_sort"] = "recent"
         raw.setdefault("language", "zh")
         if raw.get("language") not in {"zh", "en"}:
             raw["language"] = "zh"
@@ -210,6 +233,11 @@ class Library:
         sasayaki = self._state.setdefault("sasayaki", {})
         if isinstance(sasayaki, dict):
             sasayaki.pop(book_id, None)
+        for shelf in self._state.setdefault("shelves", []):
+            if isinstance(shelf, dict):
+                book_ids = shelf.get("book_ids", shelf.get("bookIds", []))
+                if isinstance(book_ids, list):
+                    shelf["book_ids"] = [item for item in book_ids if item != book_id]
         stored_path = Path(str(removed.get("stored_path", ""))).expanduser()
         if stored_path.exists() and stored_path.is_file():
             stored_path.unlink()
@@ -322,7 +350,7 @@ class Library:
                 existing.update(asdict(statistic))
         self._save_state()
 
-    def add_highlight(self, record: BookRecord, text: str, note: str) -> None:
+    def add_highlight(self, record: BookRecord, text: str, note: str, position: int = 0) -> None:
         highlights = self._state.setdefault("highlights", [])
         highlights.append(
             {
@@ -330,10 +358,77 @@ class Library:
                 "title": record.title,
                 "text": text[:500],
                 "note": note,
+                "position": max(0, int(position)),
                 "created_at": _now(),
             }
         )
         self._save_state()
+
+    def highlights_for(self, record: BookRecord) -> list[dict[str, object]]:
+        return [
+            item
+            for item in self._state.setdefault("highlights", [])
+            if isinstance(item, dict) and (item.get("book_id") == record.id or item.get("title") == record.title)
+        ]
+
+    def create_shelf(self, name: str) -> bool:
+        cleaned = name.strip()
+        if not cleaned:
+            return False
+        shelves = self.shelves
+        if any(str(shelf.get("name")) == cleaned for shelf in shelves):
+            return False
+        shelves.append({"name": cleaned, "book_ids": []})
+        self._state["shelves"] = shelves
+        self._save_state()
+        return True
+
+    def delete_shelf(self, name: str) -> bool:
+        cleaned = name.strip()
+        shelves = self.shelves
+        next_shelves = [shelf for shelf in shelves if str(shelf.get("name")) != cleaned]
+        if len(next_shelves) == len(shelves):
+            return False
+        self._state["shelves"] = next_shelves
+        self._save_state()
+        return True
+
+    def move_shelf(self, from_index: int, to_index: int) -> bool:
+        shelves = self.shelves
+        if from_index < 0 or from_index >= len(shelves):
+            return False
+        shelf = shelves.pop(from_index)
+        shelves.insert(max(0, min(to_index, len(shelves))), shelf)
+        self._state["shelves"] = shelves
+        self._save_state()
+        return True
+
+    def move_book_to_shelf(self, book_id: str, shelf_name: str | None) -> bool:
+        if not any(book.id == book_id for book in self.books):
+            return False
+        cleaned = shelf_name.strip() if shelf_name else None
+        shelves = self.shelves
+        for shelf in shelves:
+            book_ids = [item for item in shelf.get("book_ids", []) if item != book_id]
+            shelf["book_ids"] = book_ids
+        if cleaned:
+            target = next((shelf for shelf in shelves if shelf.get("name") == cleaned), None)
+            if target is None:
+                target = {"name": cleaned, "book_ids": []}
+                shelves.append(target)
+            book_ids = list(target.get("book_ids", []))
+            if book_id not in book_ids:
+                book_ids.append(book_id)
+            target["book_ids"] = book_ids
+        self._state["shelves"] = shelves
+        self._save_state()
+        return True
+
+    def shelf_for(self, book_id: str) -> str | None:
+        for shelf in self.shelves:
+            if book_id in shelf.get("book_ids", []):
+                return str(shelf.get("name"))
+        return None
 
     def sasayaki_for(self, record: BookRecord) -> dict[str, object] | None:
         records = self._state.setdefault("sasayaki", {})
@@ -393,6 +488,7 @@ class Library:
         state.setdefault("books", [])
         state.setdefault("statistics", [])
         state.setdefault("highlights", [])
+        state.setdefault("shelves", [])
         state.setdefault("sasayaki", {})
         state.setdefault("settings", {})
         return state

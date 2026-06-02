@@ -24,9 +24,10 @@ Hoshi Reader Terminal 是一个能在 Windows、macOS 和 Linux 终端里运行�
 
 ## 功能
 
-- 以书库为阅读入口：导入书籍后从书架打开，也可以在书籍上下文里重命名、删除、标记已读、同步单本进度或启动 Sasayaki 匹配。
+- 以书库为阅读入口：导入书籍后从书架打开，支持自定义书架、未归类分组、正在阅读分组和最近阅读/标题排序。
+- 书籍上下文支持重命名、删除、标记已读、移动到书架、同步单本进度或启动 Sasayaki 匹配。
 - 支持 `.epub`、`.txt`、`.md`、`.html`、`.xhtml`。
-- 终端分页阅读，支持方向键翻页、查词、制卡、划线、备注、统计、横排和终端竖排。
+- 终端分页阅读，支持方向键翻页、目录跳转、正文搜索、查词、制卡、划线、备注、划线列表跳转、统计、横排和终端竖排。
 - 支持导入 Yomitan Term / Frequency / Pitch 三类词典 zip 或目录。
 - 支持词典优先级调整、启用/停用、查词结果分页、递归查词和彩色终端 badge。
 - 支持 Sasayaki：SubPlz `.srt` 匹配、本地或在线音频、上一句/下一句、句子高亮、播放位置、延迟和倍速。
@@ -56,13 +57,13 @@ irm https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download
 hoshi
 ```
 
-三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.17)：
+三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.18)：
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.17-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.17-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.17-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.18-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.18-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.18-linux.tar.gz` |
 
 运行需要 Python 3.10 或更高版本。
 

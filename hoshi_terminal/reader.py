@@ -77,8 +77,9 @@ def paginate(text: str, width: int | None = None, lines_per_page: int | None = N
 
 
 def page_for_position(pages: list[Page], position: int) -> int:
-    for page in pages:
-        if page.start_char <= position <= page.end_char:
+    for index, page in enumerate(pages):
+        is_last = index == len(pages) - 1
+        if page.start_char <= position < page.end_char or (is_last and page.start_char <= position <= page.end_char):
             return page.index
     return 0
 
@@ -101,8 +102,8 @@ def render_page(
     status = [style(f"Sasayaki: {sasayaki_status}", CYAN)] if sasayaki_status else []
     footer = "\n".join(
         [
-            style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放/暂停    c 章节    y 有声书    q 退出", DIM),
-            style("按 / 输入单词查词    按 a 输入单词制卡    h 备注/划线    s 统计", DIM),
+            style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放/暂停    t/c 目录    y 有声书    q 退出", DIM),
+            style("/ 查词    a 制卡    f 搜索正文    h 划线/备注    l 划线列表    s 统计", DIM),
         ]
     )
     return "\n".join([header, ruler, content, *status, ruler, footer])
@@ -139,7 +140,7 @@ def render_vertical_page(
         lines.append(_layout_line("", width))
     lines.append(
         _layout_line(
-            "←/→ 翻页    ↑/↓ 上/下一句    Enter/Space 播放/暂停    / 查词    a 制卡    h 备注    q 退出",
+            "←/→ 翻页    ↑/↓ 上/下一句    Enter/Space 播放/暂停    t/c 目录    / 查词    a 制卡    f 搜索    l 划线    q 退出",
             width,
             align="center",
             fg=READER_MUTED,

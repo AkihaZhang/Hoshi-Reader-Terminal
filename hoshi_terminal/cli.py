@@ -936,43 +936,265 @@ def _reader_sasayaki_status_text(cue: SasayakiMatch | None, match: SasayakiMatch
     return f"{prefix}{format_time(cue.start_time)}  {cue.text}"
 
 
-def _reader_chapter_panel(
+def _reader_toc_panel(
     title: str,
     pages: list[Page],
     current_index: int,
     chapter_marks: list[tuple[str, int]],
+    initial_command: str | None = None,
 ) -> int:
-    print(clear_screen(), end="")
-    total_chars = pages[-1].end_char if pages else 0
-    current_char = pages[current_index].start_char if pages else 0
-    print(style("章节", BOLD), title)
-    print(f"当前位置: {current_char} / {total_chars} ({current_index + 1}/{len(pages)} 页)")
     if not chapter_marks:
+        print(clear_screen(), end="")
+        print(style("目录", BOLD), title)
         print("这本书没有可用章节信息。")
-    else:
-        for index, (label, position) in enumerate(chapter_marks[:80], start=1):
-            page_number = page_for_position(pages, position) + 1
-            marker = ">" if position <= current_char else " "
-            print(f"{marker} {index:>2}. p{page_number:<4} {position:>7}  {label}")
-        if len(chapter_marks) > 80:
-            print(style(f"... 还有 {len(chapter_marks) - 80} 个章节未显示", DIM))
-    raw = _read_input("输入章节序号，或 j 字符位置（留空返回）：").strip()
-    if not raw:
+        _pause()
         return current_index
-    if raw.isdigit() and chapter_marks:
-        index = int(raw)
-        if 1 <= index <= len(chapter_marks):
-            return page_for_position(pages, chapter_marks[index - 1][1])
-    if raw.startswith("j "):
-        try:
-            target = int(raw[2:].strip())
-        except ValueError:
-            target = -1
-        if target >= 0:
-            return page_for_position(pages, target)
-    print("章节输入无效。")
-    _pause()
-    return current_index
+
+    columns, rows = terminal_size()
+    page_size = max(8, rows - 8)
+    current_char = pages[current_index].start_char if pages else 0
+    active_mark = _chapter_mark_index_for_position(chapter_marks, current_char)
+    list_page = active_mark // page_size
+    total_list_pages = max(1, (len(chapter_marks) + page_size - 1) // page_size)
+    pending_command = initial_command.strip() if initial_command else None
+
+    while True:
+        print(clear_screen(), end="")
+        total_chars = pages[-1].end_char if pages else 0
+        list_page = max(0, min(total_list_pages - 1, list_page))
+        start = list_page * page_size
+        end = min(len(chapter_marks), start + page_size)
+        print(style("目录", BOLD), title)
+        print(f"当前位置: 第 {current_index + 1}/{len(pages)} 页  字符 {current_char}/{total_chars}")
+        print(f"目录页: {list_page + 1}/{total_list_pages}")
+        print(style("─" * min(columns, 96), CYAN))
+        for index in range(start, end):
+            label, position = chapter_marks[index]
+            page_number = page_for_position(pages, position) + 1
+            marker = ">" if index == active_mark else " "
+            print(f"{marker} {index + 1:>3}. p{page_number:<4} {position:>7}  {label}")
+        print(style("─" * min(columns, 96), CYAN))
+        print(style("←/p 上一页目录    →/n 下一页目录    输入序号跳转    g 页码    j 字符位置    q 返回", DIM))
+        if pending_command is not None:
+            raw = pending_command
+            pending_command = None
+        else:
+            raw = _read_toc_command(style("目录> ", CYAN)).strip()
+        if raw in {"", "q", "Q", "back", "返回"}:
+            return current_index
+        if raw in {"right", "down", "n", "N"}:
+            list_page = min(total_list_pages - 1, list_page + 1)
+            continue
+        if raw in {"left", "up", "p", "P"}:
+            list_page = max(0, list_page - 1)
+            continue
+        if raw.isdigit():
+            index = int(raw)
+            if 1 <= index <= len(chapter_marks):
+                return page_for_position(pages, chapter_marks[index - 1][1])
+        if raw.startswith("g "):
+            page_number = _parse_page_number(raw[2:], len(pages))
+            if page_number is not None:
+                return page_number
+        if raw.startswith("j "):
+            try:
+                target = int(raw[2:].strip())
+            except ValueError:
+                target = -1
+            if target >= 0:
+                return page_for_position(pages, target)
+        print("目录输入无效。")
+        _pause()
+
+
+def _chapter_mark_index_for_position(chapter_marks: list[tuple[str, int]], current_char: int) -> int:
+    active = 0
+    for index, (_, position) in enumerate(chapter_marks):
+        if position > current_char:
+            break
+        active = index
+    return active
+
+
+def _reader_search_panel(
+    title: str,
+    text: str,
+    pages: list[Page],
+    current_index: int,
+    initial_query: str | None = None,
+) -> int:
+    query = (initial_query or "").strip()
+    if not query:
+        query = _read_input("搜索正文：").strip()
+    if not query:
+        return current_index
+
+    list_page = 0
+    while True:
+        matches = _find_text_matches(text, query)
+        columns, rows = terminal_size()
+        page_size = max(8, rows - 8)
+        print(clear_screen(), end="")
+        print(style("正文搜索", BOLD), title)
+        print(f"关键词: {query}")
+        if not matches:
+            print(style("没有命中。", DIM))
+            print(style("/ 新关键词    q 返回", DIM))
+            raw = _read_search_command(style("搜索> ", CYAN)).strip()
+            if raw.startswith("/"):
+                next_query = raw[1:].strip()
+                if next_query:
+                    query = next_query
+                    list_page = 0
+                    continue
+            return current_index
+
+        active = _nearest_match_index(matches, pages[current_index].start_char)
+        total_list_pages = max(1, (len(matches) + page_size - 1) // page_size)
+        list_page = max(0, min(total_list_pages - 1, list_page))
+        start = list_page * page_size
+        end = min(len(matches), start + page_size)
+        print(f"命中: {len(matches)}    结果页: {list_page + 1}/{total_list_pages}")
+        print(style("─" * min(columns, 96), CYAN))
+        for index in range(start, end):
+            position = matches[index]
+            marker = ">" if index == active else " "
+            page_number = page_for_position(pages, position) + 1
+            snippet = _snippet_around(text, position, len(query))
+            print(f"{marker} {index + 1:>3}. p{page_number:<4} {snippet}")
+        print(style("─" * min(columns, 96), CYAN))
+        print(style("←/p 上一页结果    →/n 下一页结果    输入序号跳转    / 新关键词    q 返回", DIM))
+        raw = _read_search_command(style("搜索> ", CYAN)).strip()
+        if raw in {"", "q", "Q", "back", "返回"}:
+            return current_index
+        if raw in {"right", "down", "n", "N"}:
+            list_page = min(total_list_pages - 1, list_page + 1)
+            continue
+        if raw in {"left", "up", "p", "P"}:
+            list_page = max(0, list_page - 1)
+            continue
+        if raw.startswith("/"):
+            next_query = raw[1:].strip()
+            if next_query:
+                query = next_query
+                list_page = 0
+            continue
+        if raw.isdigit():
+            index = int(raw)
+            if 1 <= index <= len(matches):
+                return page_for_position(pages, matches[index - 1])
+        print("搜索输入无效。")
+        _pause()
+
+
+def _reader_highlights_panel(
+    library: Library,
+    record: BookRecord | None,
+    text: str,
+    pages: list[Page],
+    current_index: int,
+) -> int:
+    if record is None:
+        print("直接阅读文件时没有书架记录，无法保存或查看划线。")
+        _pause()
+        return current_index
+    highlights = library.highlights_for(record)
+    if not highlights:
+        print("这本书还没有划线。阅读时按 h 可以保存当前页和备注。")
+        _pause()
+        return current_index
+
+    list_page = 0
+    while True:
+        columns, rows = terminal_size()
+        page_size = max(8, rows - 8)
+        total_list_pages = max(1, (len(highlights) + page_size - 1) // page_size)
+        list_page = max(0, min(total_list_pages - 1, list_page))
+        start = list_page * page_size
+        end = min(len(highlights), start + page_size)
+        print(clear_screen(), end="")
+        print(style("划线 / 备注", BOLD), record.title)
+        print(f"结果页: {list_page + 1}/{total_list_pages}")
+        print(style("─" * min(columns, 96), CYAN))
+        for index in range(start, end):
+            item = highlights[index]
+            position = _highlight_position(item, text)
+            page_number = page_for_position(pages, position) + 1
+            note = str(item.get("note", "")).strip()
+            note_text = f"  {style(note, YELLOW)}" if note else ""
+            snippet = _snippet_around(text, position, 0, fallback=str(item.get("text", "")))
+            print(f"{index + 1:>3}. p{page_number:<4} {snippet}{note_text}")
+        print(style("─" * min(columns, 96), CYAN))
+        print(style("←/p 上一页    →/n 下一页    输入序号跳转    q 返回", DIM))
+        raw = _read_toc_command(style("划线> ", CYAN)).strip()
+        if raw in {"", "q", "Q", "back", "返回"}:
+            return current_index
+        if raw in {"right", "down", "n", "N"}:
+            list_page = min(total_list_pages - 1, list_page + 1)
+            continue
+        if raw in {"left", "up", "p", "P"}:
+            list_page = max(0, list_page - 1)
+            continue
+        if raw.isdigit():
+            index = int(raw)
+            if 1 <= index <= len(highlights):
+                return page_for_position(pages, _highlight_position(highlights[index - 1], text))
+        print("划线输入无效。")
+        _pause()
+
+
+def _find_text_matches(text: str, query: str, limit: int = 500) -> list[int]:
+    needle = query.strip()
+    if not needle:
+        return []
+    haystack = text.lower()
+    target = needle.lower()
+    matches: list[int] = []
+    cursor = 0
+    while len(matches) < limit:
+        index = haystack.find(target, cursor)
+        if index < 0:
+            break
+        matches.append(index)
+        cursor = index + max(1, len(target))
+    return matches
+
+
+def _nearest_match_index(matches: list[int], position: int) -> int:
+    if not matches:
+        return 0
+    for index, match in enumerate(matches):
+        if match >= position:
+            return index
+    return len(matches) - 1
+
+
+def _highlight_position(item: dict[str, object], text: str) -> int:
+    raw_position = item.get("position", 0)
+    try:
+        position = int(raw_position)
+    except (TypeError, ValueError):
+        position = 0
+    if position > 0:
+        return position
+    snippet = str(item.get("text", "")).strip()
+    if snippet:
+        found = text.find(snippet[:80])
+        if found >= 0:
+            return found
+    return 0
+
+
+def _snippet_around(text: str, position: int, length: int, radius: int = 34, fallback: str = "") -> str:
+    if text and 0 <= position < len(text):
+        start = max(0, position - radius)
+        end = min(len(text), position + max(length, 1) + radius)
+        snippet = text[start:end].replace("\n", " ").strip()
+        prefix = "…" if start > 0 else ""
+        suffix = "…" if end < len(text) else ""
+        return prefix + snippet + suffix
+    fallback = fallback.replace("\n", " ").strip()
+    return fallback[:80] + ("…" if len(fallback) > 80 else "")
 
 
 def _flash_message(message: str, seconds: float = 0.45) -> None:
@@ -1061,8 +1283,23 @@ def interactive_loop(
                 vertical = not vertical
             elif command == "y":
                 _reader_sasayaki_panel(library, record, page, sasayaki_player)
-            elif command == "c":
-                page_index = _reader_chapter_panel(title, pages, page_index, chapter_marks or [])
+            elif _is_toc_command(command):
+                page_index = _reader_toc_panel(
+                    title,
+                    pages,
+                    page_index,
+                    chapter_marks or [],
+                    initial_command=_toc_initial_command(command),
+                )
+                if not sasayaki_player.is_playing():
+                    current_cue = None
+            elif command.startswith("f "):
+                query = command[2:].strip()
+                page_index = _reader_search_panel(title, text, pages, page_index, initial_query=query)
+                if not sasayaki_player.is_playing():
+                    current_cue = None
+            elif command == "l":
+                page_index = _reader_highlights_panel(library, record, text, pages, page_index)
                 if not sasayaki_player.is_playing():
                     current_cue = None
             elif command.startswith("/"):
@@ -1087,7 +1324,7 @@ def interactive_loop(
                 if record is None:
                     print("直接阅读文件时没有书架记录，无法保存划线。")
                 else:
-                    library.add_highlight(record, page.text, note)
+                    library.add_highlight(record, page.text, note, position=page.start_char)
                     print(style("已划线当前页", GREEN))
                 _read_input(style("按 Enter 继续", DIM))
             elif command == "s":
@@ -1153,7 +1390,8 @@ def books_menu() -> int:
         print(f"2. {_ui('import_epub', library)}")
         print(f"3. {_ui('import_folder', library)}")
         print(f"4. {_ui('manage_books', library)}")
-        print(f"5. {_ui('book_settings', library)}")
+        print("5. 管理书架")
+        print(f"6. {_ui('book_settings', library)}")
         print(f"0. {_ui('back', library)}")
         choice = _read_input(style(_ui("choose", library), CYAN)).strip()
         if choice == "1":
@@ -1165,6 +1403,8 @@ def books_menu() -> int:
         elif choice == "4":
             _book_management_menu()
         elif choice == "5":
+            _shelf_management_menu()
+        elif choice == "6":
             _bookshelf_settings()
         elif choice in {"0", "q", "Q", "返回", "back"}:
             return 0
@@ -1258,7 +1498,7 @@ def _menu_shelf_read() -> None:
         _pause()
         return
     print(style("Hoshi 终端书架", BOLD))
-    _print_book_choices(books)
+    _print_shelf_sections(library)
     query = _read_input("输入序号或标题片段开始阅读（留空打开最近一本）：").strip() or None
     record = _find_book_for_input(library, query)
     if record is None:
@@ -1308,6 +1548,7 @@ def _book_action_menu(record: BookRecord) -> None:
         print("3. 标记已读")
         print("4. 同步本书进度")
         print("5. 匹配 Sasayaki 有声书")
+        print("6. 移动到书架")
         print("0. 返回")
         choice = _read_input(style("请选择：", CYAN)).strip()
         if choice == "1":
@@ -1354,6 +1595,8 @@ def _book_action_menu(record: BookRecord) -> None:
             except Exception as exc:
                 print(style(f"Sasayaki 匹配失败：{exc}", RED))
             _pause()
+        elif choice == "6":
+            _move_book_to_shelf_prompt(library, record)
         elif choice in {"0", "q", "Q", "返回"}:
             return
         else:
@@ -1554,17 +1797,32 @@ def _bookshelf_settings() -> None:
     library = Library()
     book_dir = Path(library.settings["book_path"]).expanduser()
     files = find_book_files(book_dir)
+    sort_label = "标题" if library.settings.get("bookshelf_sort") == "title" else "最近阅读"
     print(style("书库设置", BOLD))
     print(f"小说目录: {book_dir}")
     print(f"目录内可导入文件: {len(files)}")
+    print(f"排序: {sort_label}")
+    print(f"正在阅读分组: {'开' if library.settings.get('bookshelf_show_reading') == 'true' else '关'}")
     print("1. 设置小说目录")
     print("2. 扫描并导入小说目录")
+    print("3. 切换排序")
+    print("4. 切换正在阅读分组")
     print("0. 返回")
     choice = _read_input(style("请选择：", CYAN)).strip()
     if choice == "1":
         _menu_set_path("book_path", "小说目录")
     elif choice == "2":
         _settings_import_books()
+    elif choice == "3":
+        current = library.settings.get("bookshelf_sort")
+        library.set_setting("bookshelf_sort", "title" if current != "title" else "recent")
+        print(style("已保存", GREEN), "排序：" + ("标题" if current != "title" else "最近阅读"))
+        _pause()
+    elif choice == "4":
+        current = library.settings.get("bookshelf_show_reading") == "true"
+        library.set_setting("bookshelf_show_reading", "false" if current else "true")
+        print(style("已保存", GREEN), "正在阅读分组：" + ("关" if current else "开"))
+        _pause()
 
 
 def _menu_mine() -> None:
@@ -2170,6 +2428,8 @@ def _chapter_marks_from_extracted(book: ExtractedBook) -> list[tuple[str, int]]:
 
 
 def _sorted_books(library: Library) -> list[BookRecord]:
+    if library.settings.get("bookshelf_sort") == "title":
+        return sorted(library.books, key=lambda item: item.title.lower())
     return sorted(library.books, key=lambda item: item.last_access, reverse=True)
 
 
@@ -2177,6 +2437,158 @@ def _print_book_choices(books: list[BookRecord]) -> None:
     for index, book in enumerate(books, start=1):
         progress = summarize_text_progress(book.position, _safe_text_for_progress(book))
         print(f"{index:>2}. {progress}  {book.title}  {style(book.kind, DIM)}")
+
+
+def _print_shelf_sections(library: Library) -> None:
+    books = _sorted_books(library)
+    by_id = {book.id: book for book in books}
+    printed: set[str] = set()
+    index_by_id = {book.id: index for index, book in enumerate(books, start=1)}
+
+    if library.settings.get("bookshelf_show_reading") == "true":
+        reading = [
+            book
+            for book in books
+            if 0 < book.position < character_count(_safe_text_for_progress(book))
+        ]
+        if reading:
+            print(style("正在阅读", BOLD))
+            _print_indexed_books(reading, index_by_id, library)
+            print()
+
+    for shelf in library.shelves:
+        shelf_books = [by_id[book_id] for book_id in shelf.get("book_ids", []) if book_id in by_id]
+        if not shelf_books:
+            continue
+        print(style(str(shelf.get("name")), BOLD))
+        _print_indexed_books(shelf_books, index_by_id, library)
+        printed.update(book.id for book in shelf_books)
+        print()
+
+    unshelved = [book for book in books if book.id not in printed]
+    if unshelved:
+        label = "未归类" if library.shelves else "全部"
+        print(style(label, BOLD))
+        _print_indexed_books(unshelved, index_by_id, library)
+
+
+def _print_indexed_books(books: list[BookRecord], index_by_id: dict[str, int], library: Library) -> None:
+    for book in books:
+        progress = summarize_text_progress(book.position, _safe_text_for_progress(book))
+        shelf = library.shelf_for(book.id)
+        shelf_text = f"  {style(shelf, DIM)}" if shelf else ""
+        print(f"{index_by_id[book.id]:>2}. {progress}  {book.title}  {style(book.kind, DIM)}{shelf_text}")
+
+
+def _shelf_management_menu() -> None:
+    while True:
+        library = Library()
+        print(clear_screen(), end="")
+        print(style("管理书架", BOLD))
+        _print_shelves(library)
+        print("1. 新建书架")
+        print("2. 删除书架")
+        print("3. 调整书架顺序")
+        print("4. 移动书籍到书架")
+        print("5. 切换正在阅读分组")
+        print("0. 返回")
+        choice = _read_input(style("请选择：", CYAN)).strip()
+        if choice == "1":
+            name = _read_input("书架名：").strip()
+            if library.create_shelf(name):
+                print(style("已新建", GREEN), name)
+            else:
+                print("书架名为空或已存在。")
+            _pause()
+        elif choice == "2":
+            raw = _read_input("输入书架序号或名称：").strip()
+            name = _shelf_name_for_input(library, raw)
+            if name and library.delete_shelf(name):
+                print(style("已删除", GREEN), name)
+            else:
+                print("找不到这个书架。")
+            _pause()
+        elif choice == "3":
+            raw = _read_input("输入 原序号 新序号（例如 3 1）：").strip()
+            parts = raw.split()
+            if len(parts) == 2 and all(part.isdigit() for part in parts):
+                ok = library.move_shelf(int(parts[0]) - 1, int(parts[1]) - 1)
+                print(style("已调整", GREEN) if ok else "书架序号无效。")
+            else:
+                print("格式应为两个数字。")
+            _pause()
+        elif choice == "4":
+            books = _sorted_books(library)
+            if not books:
+                print("书架是空的。")
+                _pause()
+                continue
+            _print_book_choices(books)
+            raw_book = _read_input("输入书籍序号、标题片段或 id：").strip()
+            record = _find_book_for_input(library, raw_book)
+            if record is None:
+                print("找不到这本书。")
+                _pause()
+                continue
+            _move_book_to_shelf_prompt(library, record)
+        elif choice == "5":
+            current = library.settings.get("bookshelf_show_reading") == "true"
+            library.set_setting("bookshelf_show_reading", "false" if current else "true")
+            print(style("已保存", GREEN), "正在阅读分组：" + ("关" if current else "开"))
+            _pause()
+        elif choice in {"0", "q", "Q", "返回"}:
+            return
+        else:
+            print("没有这个书架选项。")
+            _pause()
+
+
+def _print_shelves(library: Library) -> None:
+    shelves = library.shelves
+    if not shelves:
+        print("还没有自定义书架。")
+        return
+    print("现有书架：")
+    for index, shelf in enumerate(shelves, start=1):
+        count = len(shelf.get("book_ids", []))
+        print(f"{index}. {shelf.get('name')}  {count} 本")
+
+
+def _shelf_name_for_input(library: Library, raw: str) -> str | None:
+    if not raw:
+        return None
+    shelves = library.shelves
+    if raw.isdigit():
+        index = int(raw)
+        if 1 <= index <= len(shelves):
+            return str(shelves[index - 1].get("name"))
+    for shelf in shelves:
+        if str(shelf.get("name")) == raw:
+            return raw
+    return None
+
+
+def _move_book_to_shelf_prompt(library: Library, record: BookRecord) -> None:
+    shelves = library.shelves
+    print(style("移动到书架", BOLD), record.title)
+    print("0. 未归类")
+    for index, shelf in enumerate(shelves, start=1):
+        print(f"{index}. {shelf.get('name')}")
+    raw = _read_input("输入书架序号；或输入新书架名：").strip()
+    if not raw:
+        return
+    target: str | None
+    if raw == "0":
+        target = None
+    elif raw.isdigit() and 1 <= int(raw) <= len(shelves):
+        target = str(shelves[int(raw) - 1].get("name"))
+    else:
+        target = raw
+    if library.move_book_to_shelf(record.id, target):
+        print(style("已移动", GREEN), target or "未归类")
+    else:
+        print("移动失败。")
+    _pause()
 
 
 def _find_book_for_input(library: Library, query: str | None) -> BookRecord | None:
@@ -2232,19 +2644,67 @@ def _read_reader_command(prompt: str = "", timeout: float | None = None) -> str 
     if command in {"right", "down", "left", "up", "space", ""}:
         print()
         return command
-    if command in {"r", "v", "y", "c", "s", "q"}:
+    if command in {"r", "v", "y", "c", "t", "l", "s", "q"}:
         print(command)
         return command
     if command == "/":
         return "/" + _read_input("/")
     if command == "a":
         return "a " + _read_input("a ")
+    if command == "f":
+        return "f " + _read_input("f ")
     if command == "h":
         return "h " + _read_input("h ")
     if command == "g":
         return "g " + _read_input("g ")
     print(command)
     return command
+
+
+def _read_toc_command(prompt: str = "") -> str:
+    if not sys.stdin.isatty():
+        return _read_input(prompt)
+    print(prompt, end="", flush=True)
+    key = _read_single_key()
+    command = _normalize_reader_key(key)
+    if command in {"right", "down", "left", "up", ""}:
+        print()
+        return command
+    if command.isdigit():
+        return command + _read_input(command)
+    if command in {"g", "j"}:
+        return command + " " + _read_input(command + " ")
+    print(command)
+    return command
+
+
+def _read_search_command(prompt: str = "") -> str:
+    if not sys.stdin.isatty():
+        return _read_input(prompt)
+    print(prompt, end="", flush=True)
+    key = _read_single_key()
+    command = _normalize_reader_key(key)
+    if command in {"right", "down", "left", "up", ""}:
+        print()
+        return command
+    if command.isdigit():
+        return command + _read_input(command)
+    if command == "/":
+        return "/" + _read_input("/")
+    print(command)
+    return command
+
+
+def _is_toc_command(command: str) -> bool:
+    return command in {"c", "t"} or command.startswith("t ") or command.startswith("c ") or (
+        len(command) > 1 and command[0] in {"t", "c"} and command[1:].strip().isdigit()
+    )
+
+
+def _toc_initial_command(command: str) -> str | None:
+    if command in {"c", "t"}:
+        return None
+    return command[1:].strip()
 
 
 def _normalize_reader_key(key: str) -> str:
@@ -2308,8 +2768,16 @@ def _read_single_key(timeout: float | None = None) -> str | None:
 
 
 def _parse_page_number(raw: str, total_pages: int) -> int | None:
+    value = raw.strip()
+    if value.endswith("%"):
+        try:
+            percent = float(value[:-1].strip())
+        except ValueError:
+            return None
+        percent = min(100.0, max(0.0, percent))
+        return min(total_pages - 1, max(0, round((total_pages - 1) * percent / 100)))
     try:
-        page = int(raw.strip()) - 1
+        page = int(value) - 1
     except ValueError:
         return None
     return min(total_pages - 1, max(0, page))

@@ -41,6 +41,33 @@ class StorageTests(unittest.TestCase):
             self.assertFalse(stored.exists())
             self.assertEqual(deleted._state["highlights"], [])
 
+    def test_bookshelves_create_move_reorder_and_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first = root / "first.txt"
+            second = root / "second.txt"
+            first.write_text("first", encoding="utf-8")
+            second.write_text("second", encoding="utf-8")
+            library = Library(root / "state")
+            first_record = library.import_book(first, title="First")
+            second_record = library.import_book(second, title="Second")
+
+            self.assertTrue(library.create_shelf("Novel"))
+            self.assertTrue(library.create_shelf("Reading"))
+            self.assertFalse(library.create_shelf("Novel"))
+            self.assertTrue(library.move_book_to_shelf(first_record.id, "Novel"))
+            self.assertTrue(library.move_book_to_shelf(second_record.id, "Reading"))
+            self.assertEqual(library.shelf_for(first_record.id), "Novel")
+            self.assertTrue(library.move_shelf(1, 0))
+            self.assertEqual(library.shelves[0]["name"], "Reading")
+
+            self.assertTrue(library.move_book_to_shelf(first_record.id, None))
+            self.assertIsNone(library.shelf_for(first_record.id))
+            self.assertTrue(library.delete_book(second_record.id))
+
+            reloaded = Library(root / "state")
+            self.assertNotIn(second_record.id, reloaded.shelves[0]["book_ids"])
+
 
 if __name__ == "__main__":
     unittest.main()

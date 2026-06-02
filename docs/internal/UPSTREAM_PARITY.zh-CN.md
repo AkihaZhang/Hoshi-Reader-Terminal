@@ -4,11 +4,11 @@
 
 ## 最新源码基线
 
-- iOS: `Manhhao/Hoshi-Reader` `develop` at `61306c70570c`
+- iOS: `Manhhao/Hoshi-Reader` `develop` at `172577c1e399`
 - Android: `HuangAntimony/Hoshi-Reader-Android` `main` at `27fcbfabbd43`
 - hoshidicts bridge: `Manhhao/hoshidicts-kotlin-bridge` `main` at `b0172987d9da`
 - lue audio reference: `superstarryeyes/lue` `main` at `ebcf94ae94fe`
-- Terminal current baseline before this slice: `80b553b69fb8`
+- Terminal current baseline before this slice: `cb0ea55f63b8`
 
 ## 复刻规则
 
@@ -22,12 +22,12 @@
 | 上游功能组 | 最新源码入口 | 终端版状态 | 下一步 |
 | --- | --- | --- | --- |
 | 主导航 | Android `navigation/AppShell.kt`, iOS `ShelfView/DictionarySearchView/Settings` | 已按 `书库 / 查词 / 设置` 三入口实现。 | 保持菜单结构，不再单独放重复的阅读入口。 |
-| 书库进入阅读 | Android `BookshelfView.kt`, iOS `ShelfView.swift` | 已实现：书架输入数字、标题片段或 id 打开阅读。 | 继续补上更完整的书架分组。 |
+| 书库进入阅读 | Android `BookshelfView.kt`, iOS `ShelfView.swift` | 已实现：书架输入数字、标题片段或 id 打开阅读，支持最近阅读/标题排序。 | 继续补批量选择。 |
 | 书籍导入 | Android `MultipleFileImportContent`, `ImportDirectoryScanner`; iOS `BookshelfViewModel.importBooks` | 已实现单文件和目录扫描导入，支持 epub/txt/md/html/xhtml。 | 目录导入错误汇总继续对齐 Android 批量导入提示。 |
-| 书籍上下文菜单 | Android 长按书籍：重命名、删除、移动、同步、匹配有声书、标记已读 | 本次补上重命名、删除、标记已读、同步本书、匹配 Sasayaki。 | `移动到书架/书架管理/批量选择` 待实现。 |
-| 书架分组 | Android `BookShelf`, iOS `BookShelf` | 未实现。 | 做 `reading/unshelved/custom shelves` 数据结构和移动命令。 |
-| 阅读器分页 | Android `ReaderWebView`, `ReaderPaginationScripts`; iOS `ReaderWebView` | 已实现终端分页和方向键翻页。 | 增加章节列表与跳转，减少 `g` 这类隐藏命令。 |
-| 阅读器菜单 | Android `ReaderMenuDestination`, iOS `ActiveSheet` | 已有查词、制卡、划线、统计、Sasayaki 详情和章节跳转。 | 补 `标注列表/外观` 两个阅读器内入口。 |
+| 书籍上下文菜单 | Android 长按书籍：重命名、删除、移动、同步、匹配有声书、标记已读 | 已实现重命名、删除、标记已读、移动到书架、同步本书、匹配 Sasayaki。 | `批量选择` 待实现。 |
+| 书架分组 | Android `BookShelf`, iOS `BookShelf` | 已实现自定义书架、移动书籍、删除/重排书架、未归类和正在阅读分组。 | 折叠状态和批量移动待实现。 |
+| 阅读器分页 | Android `ReaderWebView`, `ReaderPaginationScripts`; iOS `ReaderWebView` | 已实现终端分页、方向键翻页、章节目录和百分比跳转。 | 继续补阅读器外观入口。 |
+| 阅读器菜单 | Android `ReaderMenuDestination`, iOS `ActiveSheet` | 已有查词、制卡、划线、划线列表跳转、正文搜索、统计、Sasayaki 详情和章节跳转。 | 补阅读器内外观面板。 |
 | 竖排 | Android/iOS WebView writing mode | 已有终端 cell 宽度竖排；汉字/假名按双宽，标点窄化。 | 继续修实际字体不等宽时的降级提示。 |
 | 查词核心 | Android `DictionaryNativeBridge`, hoshidicts bridge; iOS `LookupEngine` | 当前是 Python/SQLite Yomitan 实现，不是直接链接 JNI/C++ bridge。Term/Frequency/Pitch、优先级、启停、分页、颜色 badge 已有。 | 长文本扫描、去重、频率排序、IPA/pitch 字段继续向 hoshidicts 对齐。 |
 | 查词弹窗体验 | Android `LookupPopupHtml`, `ReaderLookupPopupBridge`; iOS `PopupView` | 终端版用分页文本结果等价，不做 WebView 坐标弹窗。 | 继续优化颜色层级、折叠/展开、递归查词。 |

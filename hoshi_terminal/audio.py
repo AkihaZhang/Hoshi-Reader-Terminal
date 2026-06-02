@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from urllib import parse, request
@@ -136,7 +137,7 @@ class LocalAudioRepository:
         normalized_reading = katakana_to_hiragana(reading)
         rows: list[LocalAudioEntry] = []
         try:
-            with sqlite3.connect(self.db_file) as db:
+            with closing(sqlite3.connect(self.db_file)) as db:
                 if normalized_reading:
                     cursor = db.execute(
                         """
@@ -172,7 +173,7 @@ class LocalAudioRepository:
         if not self.db_file.is_file():
             return None
         try:
-            with sqlite3.connect(self.db_file) as db:
+            with closing(sqlite3.connect(self.db_file)) as db:
                 row = db.execute(
                     "SELECT data FROM android WHERE source = ? AND file = ? LIMIT 1",
                     (audio_file.source, audio_file.file),
