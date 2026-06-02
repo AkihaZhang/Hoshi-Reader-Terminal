@@ -26,6 +26,12 @@ class ReaderTests(unittest.TestCase):
         rendered = render_vertical("端末で読む", rows=4)
         self.assertIn("端", rendered)
 
+    def test_vertical_renderer_keeps_explicit_line_boundaries(self) -> None:
+        rendered = render_vertical("一。\n二。", rows=4)
+
+        self.assertIn("二 一", rendered)
+        self.assertNotIn("一\n｡\n二", rendered)
+
     def test_vertical_renderer_uses_terminal_cell_widths(self) -> None:
         self.assertEqual(terminal_cell_width("星"), 2)
         self.assertEqual(terminal_cell_width("あ"), 2)
@@ -71,6 +77,7 @@ class ReaderTests(unittest.TestCase):
         self.assertIn("←/→ 翻页", rendered)
         self.assertIn("48;2;188;216;225", rendered)
         self.assertNotIn("48;2;238;224;201", rendered)
+        self.assertNotIn("书籍 │ 词典 │ 设置", rendered)
 
     def test_reader_highlights_sasayaki_sentence_in_plain_text(self) -> None:
         previous = os.environ.get("FORCE_COLOR")

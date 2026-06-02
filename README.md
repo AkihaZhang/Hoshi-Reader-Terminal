@@ -56,13 +56,13 @@ Then run:
 hoshi
 ```
 
-Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.16):
+Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.17):
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.16-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.16-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.16-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.17-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.17-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.17-linux.tar.gz` |
 
 Python 3.10+ is required.
 

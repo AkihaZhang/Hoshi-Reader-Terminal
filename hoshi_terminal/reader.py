@@ -121,9 +121,8 @@ def render_vertical_page(
     max_columns = max(4, min(28, (width - 8) // 5))
     percent = (page.index + 1) / max(1, total_pages) * 100.0
     progress = f"{title}  {page.index + 1}/{total_pages}  {percent:.2f}%"
-    nav = "书籍 │ 词典 │ 设置"
     lines = [
-        _layout_line(_spread_line(nav, progress, width), width, fg=READER_MUTED, bold=True),
+        _layout_line(progress, width, align="right", fg=READER_MUTED, bold=True),
         _layout_line("", width),
     ]
     body = render_vertical(page.text, rows=content_rows, highlight=highlight, paper=True, max_columns=max_columns).splitlines()
@@ -193,12 +192,11 @@ def render_vertical(
     paper: bool = False,
     max_columns: int | None = None,
 ) -> str:
-    items = _vertical_items(text, highlight)
-    if not items:
-        return ""
     _, terminal_rows = terminal_size()
     rows = rows or max(8, min(24, terminal_rows - 10))
-    chunks = [items[index : index + rows] for index in range(0, len(items), rows)]
+    chunks = _vertical_columns(text, rows, highlight)
+    if not chunks:
+        return ""
     chunks = chunks[: max_columns or 8]
     output: list[str] = []
     for row in range(rows):
@@ -216,13 +214,36 @@ def render_vertical(
     return warning + "\n" + "\n".join(output).rstrip()
 
 
-def _vertical_items(text: str, highlight: str | None) -> list[tuple[str, bool]]:
+def _vertical_columns(text: str, rows: int, highlight: str | None) -> list[list[tuple[str, bool]]]:
     ranges = _highlight_ranges(text, highlight)
+    columns: list[list[tuple[str, bool]]] = []
+    offset = 0
+    previous_was_blank = False
+    for line in text.splitlines() or [text]:
+        items = _vertical_items(line, ranges, offset)
+        if items:
+            columns.extend(items[index : index + rows] for index in range(0, len(items), rows))
+            previous_was_blank = False
+        elif columns and not previous_was_blank:
+            columns.append([])
+            previous_was_blank = True
+        offset += len(line) + 1
+    while columns and not columns[-1]:
+        columns.pop()
+    return columns
+
+
+def _vertical_items(
+    text: str,
+    ranges: list[tuple[int, int]],
+    offset: int = 0,
+) -> list[tuple[str, bool]]:
     items: list[tuple[str, bool]] = []
     for index, char in enumerate(text):
         if char.isspace():
             continue
-        highlighted = any(start <= index < end for start, end in ranges)
+        absolute_index = offset + index
+        highlighted = any(start <= absolute_index < end for start, end in ranges)
         items.append((char, highlighted))
     return items
 
@@ -291,15 +312,6 @@ def _layout_line(
         left = 0
         right = remaining
     return _ansi_span(" " * left + content + " " * right, fg=fg, bold=bold)
-
-
-def _spread_line(left: str, right: str, width: int) -> str:
-    left_width = _visible_width(left)
-    right_width = _visible_width(right)
-    if left_width + right_width + 2 > width:
-        right = _truncate_visible(right, max(12, width - left_width - 2))
-        right_width = _visible_width(right)
-    return left + (" " * max(1, width - left_width - right_width)) + right
 
 
 def _visible_width(text: str) -> int:
