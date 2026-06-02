@@ -55,6 +55,7 @@ class ReaderTests(unittest.TestCase):
         self.assertIn("←/→ 翻页", rendered)
         self.assertIn("↑/↓ Sasayaki", rendered)
         self.assertIn("Enter/Space 播放", rendered)
+        self.assertIn("[/] 音频跳转", rendered)
         self.assertIn("t/c 目录", rendered)
         self.assertNotIn("→/↓ 下一页", rendered)
         self.assertNotIn("←/↑ 上一页", rendered)

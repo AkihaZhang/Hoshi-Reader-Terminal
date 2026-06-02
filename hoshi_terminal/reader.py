@@ -102,7 +102,7 @@ def render_page(
     status = [style(f"Sasayaki: {sasayaki_status}", CYAN)] if sasayaki_status else []
     footer = "\n".join(
         [
-            style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放/暂停    t/c 目录    y 有声书    q 退出", DIM),
+            style("←/→ 翻页    ↑/↓ Sasayaki 上/下一句    Enter/Space 播放/暂停    [/] 音频跳转    t/c 目录    q 退出", DIM),
             style("/ 查词    a 制卡    f 搜索正文    h 划线/备注    l 划线列表    s 统计", DIM),
         ]
     )
@@ -140,7 +140,7 @@ def render_vertical_page(
         lines.append(_layout_line("", width))
     lines.append(
         _layout_line(
-            "←/→ 翻页    ↑/↓ 上/下一句    Enter/Space 播放/暂停    t/c 目录    / 查词    a 制卡    f 搜索    l 划线    q 退出",
+            "←/→ 翻页    ↑/↓ 上/下一句    Enter/Space 播放/暂停    [/] 音频跳转    t/c 目录    / 查词    a 制卡    q 退出",
             width,
             align="center",
             fg=READER_MUTED,

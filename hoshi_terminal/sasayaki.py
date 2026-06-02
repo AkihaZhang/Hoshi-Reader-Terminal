@@ -279,6 +279,8 @@ class SasayakiPlayer:
         self.started_at = 0.0
         self.paused_at: float | None = None
         self.paused_total = 0.0
+        self.audio_path: str | Path | None = None
+        self.duration: float | None = None
 
     def play(
         self,
@@ -289,6 +291,8 @@ class SasayakiPlayer:
     ) -> tuple[list[str], str]:
         self.stop()
         command, player = audio_command(audio_path, start_time=start_time, rate=rate, duration=duration)
+        self.audio_path = audio_path
+        self.duration = duration
         self.player_name = player
         if player == "mpv" and os.name != "nt":
             self.ipc_path = Path(tempfile.gettempdir()) / f"hoshi-reader-terminal-mpv-{os.getpid()}-{id(self)}.sock"
@@ -341,14 +345,23 @@ class SasayakiPlayer:
         return self.base_position + elapsed * self.rate
 
     def seek(self, seconds: float) -> bool:
-        if not self.is_playing() or self.player_name != "mpv" or self.ipc_path is None:
+        if not self.is_playing():
             return False
-        try:
-            _send_mpv_command(self.ipc_path, ["set_property", "time-pos", max(0.0, seconds)])
-        except OSError:
-            return False
+        target = max(0.0, seconds)
+        if self.player_name == "mpv" and self.ipc_path is not None:
+            try:
+                _send_mpv_command(self.ipc_path, ["set_property", "time-pos", target])
+            except OSError:
+                return False
+        else:
+            if self.audio_path is None or self.player_name in {"open", "start", "xdg-open"}:
+                return False
+            try:
+                self.play(self.audio_path, start_time=target, rate=self.rate, duration=self.duration)
+            except RuntimeError:
+                return False
         self.paused = False
-        self.base_position = max(0.0, seconds)
+        self.base_position = target
         self.started_at = time.monotonic()
         self.paused_at = None
         self.paused_total = 0.0

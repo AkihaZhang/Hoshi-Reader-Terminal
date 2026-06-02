@@ -43,6 +43,16 @@ class AnkiSettings:
     field_mappings: dict[str, str]
     tag: str
     mode: str
+    allow_duplicates: bool = False
+    duplicate_scope: str = "collection"
+    check_duplicates_across_all_models: bool = False
+    force_sync: bool = False
+
+
+@dataclass(frozen=True)
+class AnkiNoteType:
+    name: str
+    fields: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -75,6 +85,10 @@ def settings_from_dict(settings: dict[str, str]) -> AnkiSettings:
         field_mappings=field_mappings,
         tag=settings.get("anki_tag", "hoshi"),
         mode=settings.get("anki_mode", "both"),
+        allow_duplicates=_bool_setting(settings.get("anki_allow_duplicates", "false")),
+        duplicate_scope=_duplicate_scope(settings.get("anki_duplicate_scope", "collection")),
+        check_duplicates_across_all_models=_bool_setting(settings.get("anki_check_all_models", "false")),
+        force_sync=_bool_setting(settings.get("anki_force_sync", "false")),
     )
 
 
@@ -111,15 +125,51 @@ def add_note(
         "modelName": settings.model,
         "fields": fields,
         "tags": [settings.tag],
-        "options": {
-            "allowDuplicate": False,
-            "duplicateScope": "collection",
-        },
+        "options": duplicate_options(settings),
     }
     result = invoke(settings.url, "addNote", {"note": note_payload})
     if not isinstance(result, int):
         raise AnkiConnectError(f"AnkiConnect 返回了异常 note id: {result!r}")
+    if settings.force_sync:
+        invoke(settings.url, "sync", {}, timeout=12.0)
     return result
+
+
+def duplicate_options(settings: AnkiSettings) -> dict[str, object]:
+    scope = _duplicate_scope(settings.duplicate_scope)
+    options: dict[str, object] = {"allowDuplicate": settings.allow_duplicates}
+    duplicate_scope_options: dict[str, object] = {}
+    if scope == "deckroot":
+        options["duplicateScope"] = "deck"
+        duplicate_scope_options["deckName"] = settings.deck.split("::", 1)[0]
+        duplicate_scope_options["checkChildren"] = True
+    else:
+        options["duplicateScope"] = scope
+    if settings.check_duplicates_across_all_models:
+        duplicate_scope_options["checkAllModels"] = True
+    if duplicate_scope_options:
+        options["duplicateScopeOptions"] = duplicate_scope_options
+    return options
+
+
+def is_duplicate(settings: AnkiSettings, expression: str, first_field: str | None = None) -> bool:
+    key = expression.strip()
+    if not key:
+        return False
+    field = first_field or next(iter(settings.field_mappings), "Expression")
+    note_payload = {
+        "deckName": settings.deck,
+        "modelName": settings.model,
+        "fields": {field: key},
+        "options": duplicate_options(settings),
+    }
+    result = invoke(settings.url, "canAddNotesWithErrorDetail", {"notes": [note_payload]})
+    if not isinstance(result, list) or not result:
+        return False
+    first = result[0]
+    if not isinstance(first, dict):
+        return False
+    return not bool(first.get("canAdd", True))
 
 
 def render_fields(settings: AnkiSettings, payload: MiningPayload, store_media: bool = True) -> dict[str, str]:
@@ -201,6 +251,54 @@ def version(url: str) -> int:
     return result
 
 
+def fetch_decks(url: str) -> list[str]:
+    result = invoke(url, "deckNames", {}, timeout=5.0)
+    if not isinstance(result, list):
+        raise AnkiConnectError(f"无法识别 Anki 牌组列表: {result!r}")
+    return [str(item) for item in result if str(item)]
+
+
+def fetch_note_types(url: str) -> list[AnkiNoteType]:
+    result = invoke(url, "modelNames", {}, timeout=5.0)
+    if not isinstance(result, list):
+        raise AnkiConnectError(f"无法识别 Anki 模板列表: {result!r}")
+    note_types: list[AnkiNoteType] = []
+    for model in [str(item) for item in result if str(item)]:
+        fields = invoke(url, "modelFieldNames", {"modelName": model}, timeout=5.0)
+        if not isinstance(fields, list):
+            fields = []
+        note_types.append(AnkiNoteType(model, tuple(str(field) for field in fields if str(field))))
+    return note_types
+
+
+def select_deck_after_fetch(decks: list[str], current: str) -> str:
+    if current in decks:
+        return current
+    for deck in decks:
+        if deck.lower() != "default":
+            return deck
+    return decks[0] if decks else current
+
+
+def select_note_type_after_fetch(note_types: list[AnkiNoteType], current: str) -> AnkiNoteType | None:
+    for note_type in note_types:
+        if note_type.name == current:
+            return note_type
+    for note_type in note_types:
+        if lapis_note_type_matches(note_type):
+            return note_type
+    return note_types[0] if note_types else None
+
+
+def lapis_note_type_matches(note_type: AnkiNoteType) -> bool:
+    fields = set(note_type.fields)
+    return "lapis" in note_type.name.lower() or all(field in fields for field in ("Expression", "MainDefinition", "Sentence"))
+
+
+def lapis_default_mappings_for_fields(fields: tuple[str, ...] | list[str]) -> dict[str, str]:
+    return {field: DEFAULT_LAPIS_FIELD_MAPPINGS[field] for field in fields if field in DEFAULT_LAPIS_FIELD_MAPPINGS}
+
+
 def invoke(url: str, action: str, params: dict[str, object], timeout: float = 1.5) -> object:
     body = json.dumps({"action": action, "version": 6, "params": params}).encode("utf-8")
     req = request.Request(url, data=body, headers={"Content-Type": "application/json"})
@@ -233,6 +331,24 @@ def _field_mappings_from_settings(settings: dict[str, str]) -> dict[str, str]:
         back = settings.get("anki_back_field", "Back")
         return {front: "{expression}", back: "{sentence}<br><br>{glossary-first}"}
     return dict(DEFAULT_LAPIS_FIELD_MAPPINGS)
+
+
+def _bool_setting(value: str | bool | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on", "开"}
+
+
+def _duplicate_scope(value: str | None) -> str:
+    normalized = str(value or "collection").strip().lower().replace("-", "").replace("_", "")
+    aliases = {
+        "collection": "collection",
+        "all": "collection",
+        "deck": "deck",
+        "deckroot": "deckroot",
+        "root": "deckroot",
+    }
+    return aliases.get(normalized, "collection")
 
 
 def _store_audio_asset(settings: AnkiSettings, asset: AudioAsset) -> str:

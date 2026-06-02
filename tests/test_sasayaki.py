@@ -19,6 +19,7 @@ from hoshi_terminal.sasayaki import (
     parse_srt,
     resolve_cue_audio_range,
 )
+import hoshi_terminal.sasayaki as sasayaki_module
 
 
 class SasayakiTests(unittest.TestCase):
@@ -136,6 +137,41 @@ class SasayakiTests(unittest.TestCase):
         player.started_at = time.monotonic() - 2.0
 
         self.assertGreaterEqual(player.current_time() or 0.0, 11.5)
+
+    def test_player_seek_restarts_ffplay_at_target_time(self) -> None:
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.alive = True
+
+            def poll(self) -> int | None:
+                return None if self.alive else 0
+
+            def terminate(self) -> None:
+                self.alive = False
+
+            def kill(self) -> None:
+                self.alive = False
+
+        calls: list[tuple[float, float | None]] = []
+        original_audio_command = sasayaki_module.audio_command
+        original_open_audio_process = sasayaki_module._open_audio_process
+
+        def fake_audio_command(audio_path: str | Path, start_time: float = 0.0, rate: float = 1.0, duration: float | None = None):
+            calls.append((start_time, duration))
+            return ["fake-player", str(audio_path)], "ffplay"
+
+        try:
+            sasayaki_module.audio_command = fake_audio_command  # type: ignore[assignment]
+            sasayaki_module._open_audio_process = lambda command, player: FakeProcess()  # type: ignore[assignment]
+            player = SasayakiPlayer()
+            player.play("audio.mp3", start_time=10.0, duration=None)
+
+            self.assertTrue(player.seek(30.0))
+        finally:
+            sasayaki_module.audio_command = original_audio_command  # type: ignore[assignment]
+            sasayaki_module._open_audio_process = original_open_audio_process  # type: ignore[assignment]
+
+        self.assertEqual(calls[-1], (30.0, None))
 
 
 if __name__ == "__main__":

@@ -57,13 +57,13 @@ irm https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download
 hoshi
 ```
 
-三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.18)：
+三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.19)：
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.18-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.18-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.18-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.19-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.19-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.19-linux.tar.gz` |
 
 运行需要 Python 3.10 或更高版本。
 

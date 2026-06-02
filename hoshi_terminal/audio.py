@@ -15,6 +15,7 @@ DEFAULT_AUDIO_SOURCE_URL = "https://hoshi-reader.manhhaoo-do.workers.dev/?term={
 LOCAL_AUDIO_URL = "http://localhost:8765/localaudio/get/?term={term}&reading={reading}"
 LOCAL_AUDIO_SCHEME = "hoshi-local-audio"
 DEFAULT_LOCAL_AUDIO_PATH = "Audio/android.db"
+DEFAULT_LOCAL_AUDIO_SOURCE_CONFIG_PATH = "Audio/android_sources.json"
 DEFAULT_LOCAL_AUDIO_SOURCES = [
     "nhk16",
     "daijisen",
@@ -27,6 +28,7 @@ DEFAULT_LOCAL_AUDIO_SOURCES = [
     "forvo_ext",
     "forvo_ext2",
 ]
+SUPPORTED_LOCAL_AUDIO_SUFFIXES = {".mp3", ".opus", ".ogg"}
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,15 @@ class LocalAudioEntry:
 class LocalAudioFile:
     source: str
     file: str
+
+
+@dataclass(frozen=True)
+class LocalAudioSourceConfig:
+    version: int = 1
+    source_order: tuple[str, ...] = ()
+
+    def to_json(self) -> str:
+        return json.dumps({"version": self.version, "sourceOrder": list(self.source_order)}, ensure_ascii=False)
 
 
 @dataclass(frozen=True)
@@ -100,7 +111,10 @@ def expand_audio_template(template: str, term: str, reading: str) -> str:
 
 def resolve_word_audio(term: str, reading: str, settings: dict[str, str], data_root: Path, timeout: float = 4.0) -> AudioAsset | None:
     if settings.get("audio_enable_local", "false").lower() == "true":
-        local = LocalAudioRepository(Path(settings.get("audio_local_db_path") or data_root / DEFAULT_LOCAL_AUDIO_PATH))
+        local = LocalAudioRepository(
+            Path(settings.get("audio_local_db_path") or data_root / DEFAULT_LOCAL_AUDIO_PATH),
+            source_config_file=settings.get("audio_local_source_config_path") or None,
+        )
         asset = local.resolve_asset(term, reading)
         if asset is not None:
             return asset
@@ -114,8 +128,13 @@ def resolve_word_audio(term: str, reading: str, settings: dict[str, str], data_r
 
 
 class LocalAudioRepository:
-    def __init__(self, db_file: str | Path) -> None:
+    def __init__(self, db_file: str | Path, source_config_file: str | Path | None = None) -> None:
         self.db_file = Path(db_file).expanduser()
+        self.source_config_file = (
+            Path(source_config_file).expanduser()
+            if source_config_file
+            else self.db_file.with_name(Path(DEFAULT_LOCAL_AUDIO_SOURCE_CONFIG_PATH).name)
+        )
 
     def resolve_asset(self, term: str, reading: str) -> AudioAsset | None:
         entry = self.find_audio(term, reading)
@@ -143,7 +162,7 @@ class LocalAudioRepository:
                         """
                         SELECT source, expression, reading, file
                         FROM entries
-                        WHERE (expression = ? OR reading = ?) AND lower(file) LIKE '%.mp3'
+                        WHERE expression = ? OR reading = ?
                         """,
                         (term, normalized_reading),
                     )
@@ -152,7 +171,7 @@ class LocalAudioRepository:
                         """
                         SELECT source, expression, reading, file
                         FROM entries
-                        WHERE expression = ? AND lower(file) LIKE '%.mp3'
+                        WHERE expression = ?
                         """,
                         (term,),
                     )
@@ -167,7 +186,46 @@ class LocalAudioRepository:
                 ]
         except sqlite3.Error:
             return None
-        return resolve_local_audio(term, normalized_reading, rows)
+        return resolve_local_audio(term, normalized_reading, rows, self.ensure_source_order())
+
+    def ensure_source_order(self, reset: bool = False) -> list[str]:
+        if not reset:
+            config = read_local_audio_source_config(self.source_config_file)
+            if config.version == 1 and config.source_order:
+                repaired = repair_local_audio_source_config(config, self.audio_sources_from_database())
+                if repaired != config:
+                    write_local_audio_source_config(self.source_config_file, repaired)
+                return list(repaired.source_order)
+        available_sources = self.audio_sources_from_database()
+        config = LocalAudioSourceConfig(source_order=tuple(default_local_audio_source_order(available_sources)))
+        if config.source_order:
+            write_local_audio_source_config(self.source_config_file, config)
+        return list(config.source_order)
+
+    def update_source_order(self, source_order: list[str]) -> LocalAudioSourceConfig:
+        available_sources = self.audio_sources_from_database()
+        config = repair_local_audio_source_config(LocalAudioSourceConfig(source_order=tuple(source_order)), available_sources)
+        if config.source_order:
+            write_local_audio_source_config(self.source_config_file, config)
+        return config
+
+    def audio_sources_from_database(self) -> list[str]:
+        if not self.db_file.is_file():
+            return []
+        try:
+            with closing(sqlite3.connect(self.db_file)) as db:
+                rows = db.execute(
+                    """
+                    SELECT DISTINCT source
+                    FROM entries
+                    WHERE lower(file) LIKE '%.mp3'
+                       OR lower(file) LIKE '%.opus'
+                       OR lower(file) LIKE '%.ogg'
+                    """
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        return default_local_audio_source_order([str(row[0]) for row in rows])
 
     def load_audio(self, audio_file: LocalAudioFile) -> bytes | None:
         if not self.db_file.is_file():
@@ -186,24 +244,85 @@ class LocalAudioRepository:
         return bytes(data) if data is not None else None
 
 
-def resolve_local_audio(term: str, reading: str, rows: list[LocalAudioEntry]) -> LocalAudioEntry | None:
+def resolve_local_audio(
+    term: str,
+    reading: str,
+    rows: list[LocalAudioEntry],
+    source_order: list[str] | tuple[str, ...] | None = None,
+) -> LocalAudioEntry | None:
     normalized_reading = katakana_to_hiragana(reading)
+    source_rank = {source: index for index, source in enumerate(source_order or default_local_audio_source_order([row.source for row in rows]))}
 
-    def sort_key(entry: LocalAudioEntry) -> tuple[int, int]:
+    def sort_key(entry: LocalAudioEntry) -> tuple[int, int, str]:
         reading_rank = 0 if normalized_reading and entry.reading == normalized_reading else 1
-        try:
-            source_rank = DEFAULT_LOCAL_AUDIO_SOURCES.index(entry.source)
-        except ValueError:
-            source_rank = 2**31 - 1
-        return reading_rank, source_rank
+        return reading_rank, source_rank.get(entry.source, 2**31 - 1), entry.source
 
     candidates = [
         row
         for row in rows
         if (row.expression == term or (row.reading and row.reading == normalized_reading))
-        and row.file.lower().endswith(".mp3")
+        and is_supported_local_audio_file(row.file)
     ]
     return sorted(candidates, key=sort_key)[0] if candidates else None
+
+
+def read_local_audio_source_config(config_file: str | Path) -> LocalAudioSourceConfig:
+    path = Path(config_file).expanduser()
+    if not path.is_file():
+        return LocalAudioSourceConfig()
+    try:
+        decoded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return LocalAudioSourceConfig()
+    if not isinstance(decoded, dict):
+        return LocalAudioSourceConfig()
+    raw_order = decoded.get("sourceOrder", decoded.get("source_order", []))
+    if not isinstance(raw_order, list):
+        raw_order = []
+    order = tuple(str(source).strip() for source in raw_order if str(source).strip())
+    try:
+        version = int(decoded.get("version", 1))
+    except (TypeError, ValueError):
+        version = 1
+    return LocalAudioSourceConfig(version=version, source_order=order)
+
+
+def write_local_audio_source_config(config_file: str | Path, config: LocalAudioSourceConfig) -> None:
+    path = Path(config_file).expanduser()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(config.to_json(), encoding="utf-8")
+    except OSError:
+        return
+
+
+def repair_local_audio_source_config(
+    config: LocalAudioSourceConfig,
+    available_sources: list[str] | tuple[str, ...],
+) -> LocalAudioSourceConfig:
+    available = {source for source in available_sources if source}
+    kept: list[str] = []
+    for source in config.source_order:
+        if source in available and source not in kept:
+            kept.append(source)
+    appended = default_local_audio_source_order([source for source in available_sources if source not in set(kept)])
+    return LocalAudioSourceConfig(version=1, source_order=tuple(kept + appended))
+
+
+def default_local_audio_source_order(sources: list[str] | tuple[str, ...]) -> list[str]:
+    unique = [source for source in dict.fromkeys(str(source).strip() for source in sources) if source]
+
+    def sort_key(source: str) -> tuple[int, str]:
+        try:
+            return DEFAULT_LOCAL_AUDIO_SOURCES.index(source), source
+        except ValueError:
+            return 2**31 - 1, source
+
+    return sorted(unique, key=sort_key)
+
+
+def is_supported_local_audio_file(file: str) -> bool:
+    return Path(file).suffix.lower() in SUPPORTED_LOCAL_AUDIO_SUFFIXES
 
 
 def local_audio_url(source: str, file: str) -> str:
@@ -232,6 +351,8 @@ def mime_type_for_path(path: str) -> str:
     suffix = Path(path).suffix.lower()
     if suffix == ".mp3":
         return "audio/mpeg"
+    if suffix in {".opus", ".ogg"}:
+        return "audio/ogg"
     if suffix in {".m4a", ".m4b"}:
         return "audio/mp4"
     if suffix == ".aac":

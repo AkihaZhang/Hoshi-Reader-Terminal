@@ -15,16 +15,20 @@ from hoshi_terminal.cli import (
     _language_name,
     _normalize_reader_key,
     _parse_page_number,
+    _parse_book_selection,
+    _parse_highlight_command,
     _reader_highlights_panel,
     _reader_search_panel,
     _reader_toc_panel,
+    _statistics_report,
     _toc_initial_command,
     create_backup,
     main,
+    restore_backup,
 )
 from hoshi_terminal.epub import Chapter, ExtractedBook
 from hoshi_terminal.reader import Page
-from hoshi_terminal.storage import Library
+from hoshi_terminal.storage import DailyStatistic, Library
 
 
 class CliTests(unittest.TestCase):
@@ -73,6 +77,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual(_language_name("zh"), "简体中文")
         self.assertEqual(_language_name("en"), "English")
         self.assertEqual(_language_name("ja"), "简体中文")
+
+    def test_statistics_report_groups_today_total_books_and_recent(self) -> None:
+        report = _statistics_report(
+            [
+                DailyStatistic("Book A", "2026-06-02", characters_read=1200, reading_time=600, last_reading_speed=120, max_reading_speed=140),
+                DailyStatistic("Book A", "2026-06-01", characters_read=600, reading_time=300, last_reading_speed=120, max_reading_speed=130),
+                DailyStatistic("Book B", "2026-06-02", characters_read=300, reading_time=300, last_reading_speed=60, max_reading_speed=60),
+            ],
+            today_key="2026-06-02",
+        )
+
+        self.assertIn("今日", report)
+        self.assertIn("累计", report)
+        self.assertIn("书籍", report)
+        self.assertIn("最近记录", report)
+        self.assertIn("字符: 1500", report)
+        self.assertIn("Book A", report)
+        self.assertIn("最高 140", report)
 
     def test_reader_arrow_keys_are_commands(self) -> None:
         self.assertEqual(_normalize_reader_key("\x1b[C"), "right")
@@ -229,10 +251,30 @@ class CliTests(unittest.TestCase):
         self.assertIn("划线 / 备注", output.getvalue())
         self.assertIn("note", output.getvalue())
 
+    def test_highlight_command_accepts_five_colors(self) -> None:
+        self.assertEqual(_parse_highlight_command("blue note"), ("blue", "note"))
+        self.assertEqual(_parse_highlight_command("红 重点"), ("red", "重点"))
+        self.assertEqual(_parse_highlight_command("5 紫色备注"), ("purple", "紫色备注"))
+        self.assertEqual(_parse_highlight_command("plain note"), ("yellow", "plain note"))
+
     def test_percent_goto_is_supported(self) -> None:
         self.assertEqual(_parse_page_number("1", 5), 0)
         self.assertEqual(_parse_page_number("50%", 5), 2)
         self.assertEqual(_parse_page_number("100%", 5), 4)
+
+    def test_book_selection_range_parser(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library = Library(root / "state")
+            records = []
+            for index in range(5):
+                source = root / f"{index}.txt"
+                source.write_text(str(index), encoding="utf-8")
+                records.append(library.import_book(source, title=f"Book {index}"))
+
+            selected = _parse_book_selection("1,3-4 99", records)
+
+        self.assertEqual([record.title for record in selected], ["Book 0", "Book 2", "Book 3"])
 
     def test_no_args_opens_menu(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -278,6 +320,40 @@ class CliTests(unittest.TestCase):
             self.assertIn("state-backups", str(archive.parent))
             with zipfile.ZipFile(archive) as backup:
                 self.assertNotIn("hoshi-terminal-backup-old.zip", backup.namelist())
+
+    def test_category_backup_and_restore_books(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "book.txt"
+            source.write_text("book", encoding="utf-8")
+            library = Library(root / "state")
+            record = library.import_book(source, title="Book")
+            library.create_shelf("Shelf")
+            library.move_book_to_shelf(record.id, "Shelf")
+            archive = create_backup(library, "books")
+            library.delete_book(record.id)
+
+            restore_backup(library, archive, "books")
+            restored = Library(root / "state")
+
+        self.assertEqual(len(restored.books), 1)
+        self.assertEqual(restored.books[0].title, "Book")
+        self.assertEqual(restored.shelf_for(restored.books[0].id), "Shelf")
+
+    def test_category_backup_and_restore_dictionaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library = Library(root / "state")
+            library.dictionary_file.write_text("[]", encoding="utf-8")
+            library.dictionary_file.with_suffix(".sqlite3").write_text("sqlite", encoding="utf-8")
+            archive = create_backup(library, "dictionaries")
+            library.dictionary_file.unlink()
+            library.dictionary_file.with_suffix(".sqlite3").unlink()
+
+            restore_backup(library, archive, "dictionaries")
+
+            self.assertTrue(library.dictionary_file.exists())
+            self.assertTrue(library.dictionary_file.with_suffix(".sqlite3").exists())
 
 
 if __name__ == "__main__":

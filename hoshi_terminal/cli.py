@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import tempfile
 import time
 import zipfile
 
@@ -15,11 +16,18 @@ from .anki import (
     MiningPayload,
     add_note,
     csv_fields,
+    fetch_decks,
+    fetch_note_types,
+    lapis_default_mappings_for_fields,
+    lapis_note_type_matches,
+    select_deck_after_fetch,
+    select_note_type_after_fetch,
     settings_from_dict,
     version as ankiconnect_version,
 )
 from .audio import (
     AudioSource,
+    LocalAudioRepository,
     audio_sources_from_settings,
     default_audio_sources_json,
     resolve_word_audio,
@@ -53,7 +61,7 @@ from .sasayaki import (
     parse_srt,
     previous_cue,
 )
-from .storage import BookRecord, Library, summarize_text_progress
+from .storage import BookRecord, DailyStatistic, Library, summarize_text_progress
 from .sync import TTU_ROOT, sync_book, sync_library
 from .terminal import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, YELLOW, banner, clear_screen, style, terminal_size
 from .updates import check_for_updates, format_update_info, format_update_install_result, install_latest_update
@@ -68,6 +76,14 @@ LANGUAGE_OPTIONS = [
     ("zh", "简体中文"),
     ("en", "English"),
 ]
+
+HIGHLIGHT_COLORS = {
+    "yellow": ("黄色", YELLOW),
+    "blue": ("蓝色", CYAN),
+    "green": ("绿色", GREEN),
+    "red": ("红色", RED),
+    "purple": ("紫色", MAGENTA),
+}
 
 
 UI_TEXT = {
@@ -298,7 +314,11 @@ def cmd_read(args: argparse.Namespace) -> int:
         text = extracted.text
         chapter_marks = _chapter_marks_from_extracted(extracted)
 
-    pages = paginate(text, width=args.width, lines_per_page=args.lines)
+    pages = paginate(
+        text,
+        width=args.width or _optional_int_setting(library, "reader_width"),
+        lines_per_page=args.lines or _optional_int_setting(library, "reader_lines"),
+    )
     start_page = page_for_position(pages, record.position if record else 0)
     if args.print_only or not sys.stdin.isatty():
         print(render_page(title, pages[start_page], len(pages), vertical=args.vertical))
@@ -363,18 +383,68 @@ def cmd_mine(args: argparse.Namespace) -> int:
 
 def cmd_stats(args: argparse.Namespace) -> int:
     library = Library()
-    stats = sorted(library.statistics, key=lambda item: (item.date_key, item.title), reverse=True)
-    if not stats:
-        print("还没有统计。")
-        return 0
-    print(style("阅读统计", BOLD))
-    for item in stats:
-        minutes = item.reading_time / 60
-        print(
-            f"{item.date_key}  {item.title}  "
-            f"{item.characters_read} 字符  {minutes:.1f} 分钟  {item.last_reading_speed} 字符/分钟"
-        )
+    print(_statistics_report(library.statistics))
     return 0
+
+
+def _statistics_report(stats: list[DailyStatistic], today_key: str | None = None) -> str:
+    today_key = today_key or time.strftime("%Y-%m-%d")
+    ordered = sorted(stats, key=lambda item: (item.date_key, item.title), reverse=True)
+    lines = [style("阅读统计", BOLD)]
+    if not ordered:
+        lines.append("还没有统计。")
+        return "\n".join(lines)
+
+    today = [item for item in ordered if item.date_key == today_key]
+    lines.append(_statistics_summary_block("今日", today))
+    lines.append(_statistics_summary_block("累计", ordered))
+    lines.append(style("书籍", BOLD))
+    for index, (title, items) in enumerate(_statistics_by_book(ordered)[:10], start=1):
+        characters = sum(item.characters_read for item in items)
+        seconds = sum(item.reading_time for item in items)
+        days = len({item.date_key for item in items})
+        last = max(items, key=lambda item: item.date_key)
+        max_speed = max((item.max_reading_speed for item in items), default=0)
+        lines.append(
+            f"{index:>2}. {title}  {characters} 字符  {_minutes_text(seconds)}  "
+            f"{_reading_speed(characters, seconds)} 字符/分钟  {days} 天  最近 {last.date_key}  最高 {max_speed}"
+        )
+    lines.append(style("最近记录", BOLD))
+    for item in ordered[:14]:
+        lines.append(
+            f"{item.date_key}  {item.title}  {item.characters_read} 字符  "
+            f"{_minutes_text(item.reading_time)}  {item.last_reading_speed} 字符/分钟"
+        )
+    return "\n".join(lines)
+
+
+def _statistics_summary_block(label: str, stats: list[DailyStatistic]) -> str:
+    characters = sum(item.characters_read for item in stats)
+    seconds = sum(item.reading_time for item in stats)
+    books = len({item.title for item in stats})
+    days = len({item.date_key for item in stats})
+    return (
+        f"{style(label, BOLD)}\n"
+        f"字符: {characters}    时间: {_minutes_text(seconds)}    "
+        f"速度: {_reading_speed(characters, seconds)} 字符/分钟    书籍: {books}    天数: {days}"
+    )
+
+
+def _statistics_by_book(stats: list[DailyStatistic]) -> list[tuple[str, list[DailyStatistic]]]:
+    grouped: dict[str, list[DailyStatistic]] = {}
+    for item in stats:
+        grouped.setdefault(item.title, []).append(item)
+    return sorted(grouped.items(), key=lambda pair: sum(item.characters_read for item in pair[1]), reverse=True)
+
+
+def _minutes_text(seconds: float) -> str:
+    return f"{seconds / 60:.1f} 分钟"
+
+
+def _reading_speed(characters: int, seconds: float) -> int:
+    if characters <= 0:
+        return 0
+    return int(characters / max(seconds / 60.0, 1 / 60))
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
@@ -654,7 +724,11 @@ def _print_sasayaki_cue(cue: SasayakiMatch, index: int) -> None:
 
 def _show_lookup(word: str, library: Library | None = None) -> None:
     library = library or Library()
-    results = DictionaryManager(library.dictionary_file).lookup(word)
+    results = DictionaryManager(library.dictionary_file).lookup(
+        word,
+        limit=_bounded_int_setting(library, "dictionary_max_results", default=16, minimum=1, maximum=50),
+        scan_length=_bounded_int_setting(library, "dictionary_scan_length", default=16, minimum=1, maximum=64),
+    )
     if not sys.stdin.isatty():
         print(format_results(results))
         return
@@ -686,7 +760,11 @@ def _lookup_pager(word: str, results: object, library: Library) -> None:
             next_word = command[1:].strip()
             if next_word:
                 current_word = next_word
-                current_results = DictionaryManager(library.dictionary_file).lookup(next_word)
+                current_results = DictionaryManager(library.dictionary_file).lookup(
+                    next_word,
+                    limit=_bounded_int_setting(library, "dictionary_max_results", default=16, minimum=1, maximum=50),
+                    scan_length=_bounded_int_setting(library, "dictionary_scan_length", default=16, minimum=1, maximum=64),
+                )
                 page_index = 0
         elif command.startswith("a "):
             card_word = command[2:].strip()
@@ -858,6 +936,40 @@ def _reader_sasayaki_tick(
     playback["lastPosition"] = cue.start_time
     data["playback"] = playback
     library.set_sasayaki(record, data)
+    return cue
+
+
+def _reader_sasayaki_seek(
+    library: Library,
+    record: BookRecord | None,
+    player: SasayakiPlayer,
+    delta_seconds: float,
+) -> SasayakiMatch | None:
+    if record is None:
+        _flash_message("直接阅读文件时没有书架记录，无法使用 Sasayaki。")
+        return None
+    if not player.is_playing():
+        _flash_message("Sasayaki 未在播放。")
+        return None
+    current = player.current_time()
+    if current is None:
+        _flash_message("无法读取当前播放位置。")
+        return None
+    target = max(0.0, current + delta_seconds)
+    if not player.seek(target):
+        _flash_message("当前播放器不支持终端内跳转；建议安装 mpv 或 ffplay。")
+        return None
+    data = library.sasayaki_for(record)
+    match = _sasayaki_match_data(data)
+    if not data or not match:
+        return None
+    playback = _sasayaki_playback(data)
+    cue_time = max(0.0, target - float(playback.get("delay", 0.0)))
+    cue = cue_at_time(match, cue_time) or cue_at_or_before_time(match, cue_time)
+    playback["lastPosition"] = cue.start_time if cue is not None else cue_time
+    data["playback"] = playback
+    library.set_sasayaki(record, data)
+    _flash_message(f"Sasayaki 跳转到 {format_time(cue_time)}", seconds=0.25)
     return cue
 
 
@@ -1120,10 +1232,13 @@ def _reader_highlights_panel(
             item = highlights[index]
             position = _highlight_position(item, text)
             page_number = page_for_position(pages, position) + 1
+            color = str(item.get("color", "yellow"))
+            color_label, color_code = HIGHLIGHT_COLORS.get(color, HIGHLIGHT_COLORS["yellow"])
+            color_text = style(color_label, color_code)
             note = str(item.get("note", "")).strip()
             note_text = f"  {style(note, YELLOW)}" if note else ""
             snippet = _snippet_around(text, position, 0, fallback=str(item.get("text", "")))
-            print(f"{index + 1:>3}. p{page_number:<4} {snippet}{note_text}")
+            print(f"{index + 1:>3}. p{page_number:<4} {color_text}  {snippet}{note_text}")
         print(style("─" * min(columns, 96), CYAN))
         print(style("←/p 上一页    →/n 下一页    输入序号跳转    q 返回", DIM))
         raw = _read_toc_command(style("划线> ", CYAN)).strip()
@@ -1183,6 +1298,39 @@ def _highlight_position(item: dict[str, object], text: str) -> int:
         if found >= 0:
             return found
     return 0
+
+
+def _parse_highlight_command(raw: str) -> tuple[str, str]:
+    text = raw.strip()
+    if not text:
+        return "yellow", ""
+    first, _, rest = text.partition(" ")
+    aliases = {
+        "1": "yellow",
+        "黄": "yellow",
+        "黄色": "yellow",
+        "yellow": "yellow",
+        "2": "blue",
+        "蓝": "blue",
+        "蓝色": "blue",
+        "blue": "blue",
+        "3": "green",
+        "绿": "green",
+        "绿色": "green",
+        "green": "green",
+        "4": "red",
+        "红": "red",
+        "红色": "red",
+        "red": "red",
+        "5": "purple",
+        "紫": "purple",
+        "紫色": "purple",
+        "purple": "purple",
+    }
+    color = aliases.get(first.lower())
+    if color is None:
+        return "yellow", text
+    return color, rest.strip()
 
 
 def _snippet_around(text: str, position: int, length: int, radius: int = 34, fallback: str = "") -> str:
@@ -1277,6 +1425,22 @@ def interactive_loop(
                 if cue is not None:
                     current_cue = cue
                     page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
+            elif command in {"[", "]", "{", "}"}:
+                step = _sasayaki_seek_step(library)
+                delta = -step if command == "[" else step if command == "]" else -30 if command == "{" else 30
+                cue = _reader_sasayaki_seek(library, record, sasayaki_player, float(delta))
+                if cue is not None:
+                    current_cue = cue
+                    page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
+            elif command.startswith("j "):
+                delta = _parse_relative_seconds(command[2:])
+                if delta is None:
+                    _flash_message("跳转输入格式：j 后输入 +5 或 -10。")
+                else:
+                    cue = _reader_sasayaki_seek(library, record, sasayaki_player, delta)
+                    if cue is not None:
+                        current_cue = cue
+                        page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
             elif command in {"q", "quit", "exit"}:
                 break
             elif command in {"r", "v"}:
@@ -1320,12 +1484,13 @@ def interactive_loop(
                 )
                 _read_input(style("按 Enter 继续", DIM))
             elif command.startswith("h"):
-                note = command[1:].strip()
+                color, note = _parse_highlight_command(command[1:].strip())
                 if record is None:
                     print("直接阅读文件时没有书架记录，无法保存划线。")
                 else:
-                    library.add_highlight(record, page.text, note, position=page.start_char)
-                    print(style("已划线当前页", GREEN))
+                    library.add_highlight(record, page.text, note, position=page.start_char, color=color)
+                    color_label, color_code = HIGHLIGHT_COLORS[color]
+                    print(style("已划线当前页", GREEN), style(color_label, color_code))
                 _read_input(style("按 Enter 继续", DIM))
             elif command == "s":
                 chars = max(0, page.end_char - session_start_char)
@@ -1392,6 +1557,7 @@ def books_menu() -> int:
         print(f"4. {_ui('manage_books', library)}")
         print("5. 管理书架")
         print(f"6. {_ui('book_settings', library)}")
+        print("7. 批量操作")
         print(f"0. {_ui('back', library)}")
         choice = _read_input(style(_ui("choose", library), CYAN)).strip()
         if choice == "1":
@@ -1406,6 +1572,8 @@ def books_menu() -> int:
             _shelf_management_menu()
         elif choice == "6":
             _bookshelf_settings()
+        elif choice == "7":
+            _bulk_book_management_menu()
         elif choice in {"0", "q", "Q", "返回", "back"}:
             return 0
         else:
@@ -1463,12 +1631,8 @@ def _menu_import_book() -> None:
         if not targets:
             _pause()
             return
-        try:
-            imported, skipped = library.import_books(targets)
-        except Exception as exc:
-            print(style(f"批量导入失败：{exc}", RED))
-        else:
-            print(style("批量导入完成", GREEN), f"新增 {len(imported)} 本，跳过 {len(skipped)} 本")
+        imported, skipped, failed = library.import_books_detailed(targets)
+        _print_book_import_summary(imported, skipped, failed)
         _pause()
         return
     if raw.isdigit() and files:
@@ -1604,6 +1768,47 @@ def _book_action_menu(record: BookRecord) -> None:
             _pause()
 
 
+def _bulk_book_management_menu() -> None:
+    library = Library()
+    books = _sorted_books(library)
+    if not books:
+        print("书架是空的。")
+        _pause()
+        return
+    print(style("批量操作", BOLD))
+    _print_book_choices(books)
+    raw = _read_input("输入书籍序号，支持空格/逗号/范围（例如 1 3-5，留空返回）：").strip()
+    selected = _parse_book_selection(raw, books)
+    if not selected:
+        return
+    print(f"已选择 {len(selected)} 本：")
+    for record in selected:
+        print(f"- {record.title}")
+    print("1. 移动到书架")
+    print("2. 标记已读")
+    print("3. 删除")
+    print("0. 返回")
+    choice = _read_input(style("请选择：", CYAN)).strip()
+    if choice == "1":
+        target = _select_shelf_target(library)
+        if target == "__cancel__":
+            return
+        for record in selected:
+            library.move_book_to_shelf(record.id, target)
+        print(style("已移动", GREEN), f"{len(selected)} 本 -> {target or '未归类'}")
+        _pause()
+    elif choice == "2":
+        count = sum(1 for record in selected if library.mark_book_read(record.id))
+        print(style("已标记为已读", GREEN), f"{count} 本")
+        _pause()
+    elif choice == "3":
+        confirm = _read_input(f"确认删除 {len(selected)} 本？输入 y 删除：").strip().lower()
+        if confirm == "y":
+            count = sum(1 for record in selected if library.delete_book(record.id))
+            print(style("已删除", GREEN), f"{count} 本")
+            _pause()
+
+
 def _open_book_record(library: Library, record: BookRecord) -> None:
     try:
         extracted = extract_book(Path(record.stored_path))
@@ -1612,7 +1817,11 @@ def _open_book_record(library: Library, record: BookRecord) -> None:
         return
     title = record.title or extracted.title
     text = extracted.text
-    pages = paginate(text)
+    pages = paginate(
+        text,
+        width=_optional_int_setting(library, "reader_width"),
+        lines_per_page=_optional_int_setting(library, "reader_lines"),
+    )
     start_page = page_for_position(pages, record.position)
     vertical = library.settings["reader_vertical"] == "true"
     interactive_loop(
@@ -1688,11 +1897,17 @@ def _dictionary_settings() -> None:
         library = Library()
         print(style("辞典设置", BOLD))
         print(f"词典目录: {library.settings['dictionary_path']}")
+        print(
+            "查词参数: "
+            f"最大结果 {library.settings.get('dictionary_max_results', '16')} / "
+            f"扫描长度 {library.settings.get('dictionary_scan_length', '16')}"
+        )
         print("1. 设置词典目录")
         print("2. 扫描并导入词典目录")
         print("3. 查看词典与优先级")
         print("4. 调整词典优先级")
         print("5. 启用 / 停用词典")
+        print("6. 查词参数")
         print("0. 返回")
         choice = _read_input(style("请选择：", CYAN)).strip()
         if choice == "1":
@@ -1705,6 +1920,8 @@ def _dictionary_settings() -> None:
             _dictionary_priority_menu()
         elif choice == "5":
             _dictionary_toggle_menu()
+        elif choice == "6":
+            _dictionary_behavior_settings()
         elif choice in {"0", "q", "Q", "返回"}:
             return
         else:
@@ -1762,6 +1979,19 @@ def _dictionary_toggle_menu() -> None:
     manager.set_enabled(dictionary.id, not dictionary.enabled)
     print(style("已保存", GREEN), f"{dictionary.title}: {'停用' if dictionary.enabled else '启用'}")
     _pause()
+
+
+def _dictionary_behavior_settings() -> None:
+    library = Library()
+    print(style("查词参数", BOLD))
+    print(f"1. 最大结果数: {library.settings.get('dictionary_max_results', '16')}  (1-50)")
+    print(f"2. 扫描长度: {library.settings.get('dictionary_scan_length', '16')}  (1-64)")
+    print("0. 返回")
+    choice = _read_input(style("请选择：", CYAN)).strip()
+    if choice == "1":
+        _menu_set_numeric_setting("dictionary_max_results", "最大结果数", 1, 50)
+    elif choice == "2":
+        _menu_set_numeric_setting("dictionary_scan_length", "扫描长度", 1, 64)
 
 
 def _choose_dictionary_type() -> str | None:
@@ -1837,17 +2067,7 @@ def _menu_mine() -> None:
 
 def _menu_stats_doctor() -> None:
     library = Library()
-    stats = sorted(library.statistics, key=lambda item: (item.date_key, item.title), reverse=True)
-    print(style("阅读统计", BOLD))
-    if not stats:
-        print("还没有统计。")
-    else:
-        for item in stats:
-            minutes = item.reading_time / 60
-            print(
-                f"{item.date_key}  {item.title}  "
-                f"{item.characters_read} 字符  {minutes:.1f} 分钟  {item.last_reading_speed} 字符/分钟"
-            )
+    print(_statistics_report(library.statistics))
     columns, rows = terminal_size()
     print()
     print(style("诊断", BOLD))
@@ -1919,13 +2139,23 @@ def _settings_import_books() -> None:
     confirm = _read_input("输入 y 全部导入：").strip().lower()
     if confirm != "y":
         return
-    try:
-        imported, skipped = library.import_books(files)
-    except Exception as exc:
-        print(style(f"导入失败：{exc}", RED))
-    else:
-        print(style("导入完成", GREEN), f"新增 {len(imported)} 本，跳过 {len(skipped)} 本")
+    imported, skipped, failed = library.import_books_detailed(files)
+    _print_book_import_summary(imported, skipped, failed)
     _pause()
+
+
+def _print_book_import_summary(
+    imported: list[BookRecord],
+    skipped: list[Path],
+    failed: list[tuple[Path, str]],
+) -> None:
+    print(style("批量导入完成", GREEN), f"新增 {len(imported)} 本，跳过 {len(skipped)} 本，失败 {len(failed)} 本")
+    if failed:
+        print(style("失败项", RED))
+        for path, message in failed[:10]:
+            print(f"- {path}: {message}")
+        if len(failed) > 10:
+            print(f"... 还有 {len(failed) - 10} 个失败项")
 
 
 def _settings_import_dictionaries() -> None:
@@ -2007,6 +2237,10 @@ def _settings_ankiconnect() -> None:
     print(f"正面字段: {settings['anki_front_field']}")
     print(f"背面字段: {settings['anki_back_field']}")
     print(f"标签: {settings['anki_tag']}")
+    print(f"允许重复: {'是' if settings.get('anki_allow_duplicates') == 'true' else '否'}")
+    print(f"重复范围: {_anki_duplicate_scope_label(settings.get('anki_duplicate_scope', 'collection'))}")
+    print(f"跨模板检查: {'开' if settings.get('anki_check_all_models') == 'true' else '关'}")
+    print(f"添加后同步: {'开' if settings.get('anki_force_sync') == 'true' else '关'}")
     print()
     print("1. 修改 URL")
     print("2. 修改模式")
@@ -2014,6 +2248,11 @@ def _settings_ankiconnect() -> None:
     print("4. 修改模板")
     print("5. 修改字段")
     print("6. 测试连接")
+    print("7. 从 AnkiConnect 拉取牌组和模板")
+    print("8. 修改重复检查范围")
+    print("9. 启用/停用跨模板重复检查")
+    print("10. 启用/停用允许重复")
+    print("11. 启用/停用添加后同步")
     print("0. 返回")
     choice = _read_input(style("请选择：", CYAN)).strip()
     if choice == "1":
@@ -2042,6 +2281,76 @@ def _settings_ankiconnect() -> None:
         else:
             print(style("连接成功", GREEN), f"AnkiConnect v{connected_version}")
         _pause()
+    elif choice == "7":
+        _settings_fetch_ankiconnect_config(library, settings)
+    elif choice == "8":
+        _settings_anki_duplicate_scope(library)
+    elif choice == "9":
+        current = settings.get("anki_check_all_models") == "true"
+        library.set_setting("anki_check_all_models", "false" if current else "true")
+        print(style("已保存", GREEN), "跨模板重复检查：" + ("关" if current else "开"))
+        _pause()
+    elif choice == "10":
+        current = settings.get("anki_allow_duplicates") == "true"
+        library.set_setting("anki_allow_duplicates", "false" if current else "true")
+        print(style("已保存", GREEN), "允许重复：" + ("否" if current else "是"))
+        _pause()
+    elif choice == "11":
+        current = settings.get("anki_force_sync") == "true"
+        library.set_setting("anki_force_sync", "false" if current else "true")
+        print(style("已保存", GREEN), "添加后同步：" + ("关" if current else "开"))
+        _pause()
+
+
+def _settings_fetch_ankiconnect_config(library: Library, settings: dict[str, str]) -> None:
+    anki = settings_from_dict(settings)
+    try:
+        decks = fetch_decks(anki.url)
+        note_types = fetch_note_types(anki.url)
+    except AnkiConnectError as exc:
+        print(style(f"拉取失败：{exc}", YELLOW))
+        _pause()
+        return
+    deck = select_deck_after_fetch(decks, anki.deck)
+    note_type = select_note_type_after_fetch(note_types, anki.model)
+    if deck:
+        library.set_setting("anki_deck", deck)
+    if note_type is not None:
+        library.set_setting("anki_model", note_type.name)
+        if lapis_note_type_matches(note_type):
+            mappings = lapis_default_mappings_for_fields(note_type.fields)
+            if mappings:
+                library.set_setting("anki_field_mappings", json.dumps(mappings, ensure_ascii=False))
+    print(style("已拉取", GREEN), f"{len(decks)} 个牌组，{len(note_types)} 个模板")
+    if deck:
+        print("牌组:", deck)
+    if note_type is not None:
+        print("模板:", note_type.name, f"({len(note_type.fields)} 字段)")
+    _pause()
+
+
+def _settings_anki_duplicate_scope(library: Library) -> None:
+    print(style("重复检查范围", BOLD))
+    print("1. collection  全部收藏")
+    print("2. deck        当前牌组")
+    print("3. deckroot    当前根牌组及子牌组")
+    raw = _read_input(style("请选择：", CYAN)).strip().lower()
+    scopes = {"1": "collection", "2": "deck", "3": "deckroot", "collection": "collection", "deck": "deck", "deckroot": "deckroot"}
+    scope = scopes.get(raw)
+    if scope is None:
+        print("范围无效。")
+    else:
+        library.set_setting("anki_duplicate_scope", scope)
+        print(style("已保存", GREEN), _anki_duplicate_scope_label(scope))
+    _pause()
+
+
+def _anki_duplicate_scope_label(scope: str) -> str:
+    return {
+        "collection": "全部收藏",
+        "deck": "当前牌组",
+        "deckroot": "根牌组及子牌组",
+    }.get(scope, "全部收藏")
 
 
 def _settings_audio() -> None:
@@ -2053,6 +2362,7 @@ def _settings_audio() -> None:
         print(style("词语音频", BOLD))
         print(f"本地音频: {'开' if settings.get('audio_enable_local') == 'true' else '关'}")
         print(f"本地数据库: {settings.get('audio_local_db_path', '')}")
+        print(f"本地源配置: {settings.get('audio_local_source_config_path', '')}")
         print("音频源:")
         for index, source in enumerate(sources, start=1):
             state = "开" if source.enabled else "关"
@@ -2060,9 +2370,11 @@ def _settings_audio() -> None:
         print()
         print("1. 启用/停用本地音频")
         print("2. 设置本地 android.db")
-        print("3. 添加在线音频源")
-        print("4. 启用/停用在线源")
-        print("5. 恢复 Android 默认在线源")
+        print("3. 调整本地音频源优先级")
+        print("4. 设置本地源配置 android_sources.json")
+        print("5. 添加在线音频源")
+        print("6. 启用/停用在线源")
+        print("7. 恢复 Android 默认在线源")
         print("0. 返回")
         choice = _read_input(style("请选择：", CYAN)).strip()
         if choice == "1":
@@ -2070,13 +2382,17 @@ def _settings_audio() -> None:
         elif choice == "2":
             _menu_set_path("audio_local_db_path", "本地音频数据库")
         elif choice == "3":
+            _settings_local_audio_sources()
+        elif choice == "4":
+            _menu_set_path("audio_local_source_config_path", "本地音频源配置")
+        elif choice == "5":
             name = _read_input("名称：").strip()
             url = _read_input("URL 模板（支持 {term} 和 {reading}）：").strip()
             if name and url:
                 next_sources = [source.to_dict() for source in sources]
                 next_sources.append(AudioSource(name=name, url=url, enabled=True).to_dict())
                 library.set_setting("audio_sources", json.dumps(next_sources, ensure_ascii=False))
-        elif choice == "4":
+        elif choice == "6":
             raw = _read_input("输入源序号：").strip()
             if raw.isdigit() and 1 <= int(raw) <= len(sources):
                 index = int(raw) - 1
@@ -2085,10 +2401,53 @@ def _settings_audio() -> None:
                     enabled = not source.enabled if source_index == index else source.enabled
                     next_sources.append(AudioSource(source.name, source.url, enabled, source.is_default).to_dict())
                 library.set_setting("audio_sources", json.dumps(next_sources, ensure_ascii=False))
-        elif choice == "5":
+        elif choice == "7":
             library.set_setting("audio_sources", default_audio_sources_json())
         elif choice in {"0", "q", "Q", "返回"}:
             return
+
+
+def _settings_local_audio_sources() -> None:
+    while True:
+        library = Library()
+        settings = library.settings
+        repo = LocalAudioRepository(
+            settings.get("audio_local_db_path", ""),
+            source_config_file=settings.get("audio_local_source_config_path", ""),
+        )
+        sources = repo.ensure_source_order()
+        print(clear_screen(), end="")
+        print(style("本地音频源优先级", BOLD))
+        print(f"数据库: {repo.db_file}")
+        print(f"配置: {repo.source_config_file}")
+        if not sources:
+            print(style("没有从 android.db 读到可用音频源。", YELLOW))
+            print("0. 返回")
+            if _read_input(style("请选择：", CYAN)).strip() in {"0", "q", "Q", "返回", ""}:
+                return
+            continue
+        for index, source in enumerate(sources, start=1):
+            print(f"{index}. {source}")
+        print()
+        print("输入两个数字调整顺序，例如 `3 1` 表示把第 3 个移到第 1 个。")
+        print("r. 按 android.db 重建默认顺序")
+        print("0. 返回")
+        raw = _read_input(style("请选择：", CYAN)).strip()
+        if raw in {"0", "q", "Q", "返回"}:
+            return
+        if raw.lower() == "r":
+            repo.ensure_source_order(reset=True)
+            continue
+        parts = raw.replace(",", " ").split()
+        if len(parts) != 2 or not all(part.isdigit() for part in parts):
+            continue
+        from_index, to_index = (int(parts[0]) - 1, int(parts[1]) - 1)
+        if not (0 <= from_index < len(sources) and 0 <= to_index < len(sources)):
+            continue
+        next_sources = list(sources)
+        moved = next_sources.pop(from_index)
+        next_sources.insert(to_index, moved)
+        repo.update_source_order(next_sources)
 
 
 def _settings_appearance() -> None:
@@ -2098,6 +2457,9 @@ def _settings_appearance() -> None:
     print(style(_ui("appearance", library), BOLD))
     print(f"1. {_ui('writing_direction', library)}")
     print(f"2. {_ui('language', library)}")
+    print(f"3. 阅读页宽: {library.settings.get('reader_width', '0')}  (0 为自动)")
+    print(f"4. 阅读页行数: {library.settings.get('reader_lines', '0')}  (0 为自动)")
+    print("5. 重置阅读分页")
     print(f"{_ui('current', library)}: {_ui('vertical' if current else 'horizontal', library)}")
     print(f"{_ui('language', library)}: {_language_name(language)}")
     choice = _read_input(style(_ui("choose", library), CYAN)).strip()
@@ -2107,6 +2469,17 @@ def _settings_appearance() -> None:
         print(style(_ui("saved", library), GREEN), f"{_ui('writing_direction', library)}: {new_direction}")
     elif choice == "2":
         _settings_language()
+        return
+    elif choice == "3":
+        _menu_set_numeric_setting("reader_width", "阅读页宽", 0, 240)
+        return
+    elif choice == "4":
+        _menu_set_numeric_setting("reader_lines", "阅读页行数", 0, 120)
+        return
+    elif choice == "5":
+        library.set_setting("reader_width", "0")
+        library.set_setting("reader_lines", "0")
+        print(style(_ui("saved", library), GREEN), "阅读分页：自动")
     _pause()
 
 
@@ -2192,6 +2565,7 @@ def _advanced_sasayaki() -> None:
         print("4. 播放台词")
         print("5. 设置延迟")
         print("6. 设置倍速")
+        print(f"7. 设置音频跳转步长（当前 {_sasayaki_seek_step(library)} 秒）")
         print("0. 返回")
         choice = _read_input(style("请选择：", CYAN)).strip()
         if choice == "1":
@@ -2238,6 +2612,14 @@ def _advanced_sasayaki() -> None:
                 except Exception as exc:
                     print(style(f"保存失败：{exc}", RED))
                 _pause()
+        elif choice == "7":
+            raw_step = _read_input("跳转步长（5/10/15/30）：").strip()
+            if raw_step in {"5", "10", "15", "30"}:
+                library.set_setting("sasayaki_seek_step", raw_step)
+                print(style("已保存", GREEN), f"音频跳转步长: {raw_step} 秒")
+            else:
+                print("只能输入 5、10、15、30。")
+            _pause()
         elif choice in {"0", "q", "Q", "返回"}:
             return
         else:
@@ -2282,12 +2664,33 @@ def _advanced_sync() -> None:
 
 def _advanced_backup() -> None:
     library = Library()
+    print(style("备份 / 恢复", BOLD))
+    print("1. 备份全部")
+    print("2. 只备份书籍")
+    print("3. 只备份词典")
+    print("4. 恢复全部")
+    print("5. 只恢复书籍")
+    print("6. 只恢复词典")
+    print("0. 返回")
+    choice = _read_input(style("请选择：", CYAN)).strip()
     try:
-        archive = create_backup(library)
+        if choice == "1":
+            archive = create_backup(library, "all")
+            print(style("备份完成", GREEN), archive)
+        elif choice == "2":
+            archive = create_backup(library, "books")
+            print(style("书籍备份完成", GREEN), archive)
+        elif choice == "3":
+            archive = create_backup(library, "dictionaries")
+            print(style("词典备份完成", GREEN), archive)
+        elif choice in {"4", "5", "6"}:
+            path = _read_input("备份 zip 路径：").strip().strip('"')
+            if path:
+                category = {"4": "all", "5": "books", "6": "dictionaries"}[choice]
+                restore_backup(library, path, category)
+                print(style("恢复完成", GREEN), category)
     except Exception as exc:
-        print(style(f"备份失败：{exc}", RED))
-    else:
-        print(style("备份完成", GREEN), archive)
+        print(style(f"备份/恢复失败：{exc}", RED))
     _pause()
 
 
@@ -2299,19 +2702,111 @@ def _advanced_check_update() -> None:
     _pause()
 
 
-def create_backup(library: Library) -> Path:
+def create_backup(library: Library, category: str = "all") -> Path:
+    category = _normalize_backup_category(category)
     backup_dir = library.root.parent / f"{library.root.name}-backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    archive = backup_dir / f"hoshi-terminal-backup-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    archive = backup_dir / f"hoshi-terminal-{category}-backup-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     root = library.root.resolve()
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as backup:
-        for path in sorted(root.rglob("*")):
+        for path in _backup_paths(library, category):
             if not path.is_file():
                 continue
             if path.name.startswith("hoshi-terminal-backup-") and path.suffix == ".zip":
                 continue
             backup.write(path, path.resolve().relative_to(root))
     return archive
+
+
+def restore_backup(library: Library, archive_path: str | Path, category: str = "all") -> None:
+    category = _normalize_backup_category(category)
+    archive = Path(archive_path).expanduser().resolve()
+    if not archive.is_file():
+        raise FileNotFoundError(archive)
+    root = library.root.resolve()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        extract_root = Path(temp_dir) / "restore"
+        extract_root.mkdir()
+        with zipfile.ZipFile(archive) as backup:
+            for member in backup.infolist():
+                target = (extract_root / member.filename).resolve()
+                if not str(target).startswith(str(extract_root.resolve())):
+                    raise ValueError("备份包内路径不安全。")
+            backup.extractall(extract_root)
+        if category == "all":
+            _replace_directory_contents(root, extract_root)
+        elif category == "books":
+            source_books = extract_root / "books"
+            if source_books.exists():
+                _replace_directory_contents(library.books_dir, source_books)
+            source_state = extract_root / "library.json"
+            if source_state.exists():
+                _merge_book_state(library.state_file, source_state)
+        elif category == "dictionaries":
+            for name in ("dictionaries.json", "dictionaries.sqlite3"):
+                source = extract_root / name
+                if source.exists():
+                    shutil.copy2(source, root / name)
+
+
+def _backup_paths(library: Library, category: str) -> list[Path]:
+    root = library.root.resolve()
+    if category == "all":
+        return sorted(path for path in root.rglob("*") if path.is_file())
+    if category == "books":
+        paths = [library.state_file]
+        if library.books_dir.exists():
+            paths.extend(path for path in sorted(library.books_dir.rglob("*")) if path.is_file())
+        return [path for path in paths if path.exists()]
+    if category == "dictionaries":
+        return [path for path in (library.dictionary_file, library.dictionary_file.with_suffix(".sqlite3")) if path.exists()]
+    raise ValueError("未知备份类型。")
+
+
+def _normalize_backup_category(category: str) -> str:
+    aliases = {
+        "all": "all",
+        "全部": "all",
+        "books": "books",
+        "book": "books",
+        "书籍": "books",
+        "dictionaries": "dictionaries",
+        "dictionary": "dictionaries",
+        "dict": "dictionaries",
+        "词典": "dictionaries",
+        "辞典": "dictionaries",
+    }
+    normalized = aliases.get(category.strip().lower())
+    if normalized is None:
+        raise ValueError("备份类型必须是 all / books / dictionaries")
+    return normalized
+
+
+def _replace_directory_contents(target: Path, source: Path) -> None:
+    target.mkdir(parents=True, exist_ok=True)
+    for child in target.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    for child in source.iterdir():
+        destination = target / child.name
+        if child.is_dir():
+            shutil.copytree(child, destination)
+        else:
+            shutil.copy2(child, destination)
+
+
+def _merge_book_state(current_file: Path, backup_file: Path) -> None:
+    current = json.loads(current_file.read_text(encoding="utf-8")) if current_file.exists() else {}
+    backup = json.loads(backup_file.read_text(encoding="utf-8"))
+    for key in ("books", "statistics", "highlights", "shelves"):
+        if key in backup:
+            current[key] = backup[key]
+    if "sasayaki" in backup:
+        current["sasayaki"] = backup["sasayaki"]
+    current_file.parent.mkdir(parents=True, exist_ok=True)
+    current_file.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _settings_about() -> None:
@@ -2329,6 +2824,27 @@ def _menu_set_raw_setting(key: str, label: str) -> None:
         return
     library.set_setting(key, raw)
     print(style("已保存", GREEN), f"{label}: {raw}")
+    _pause()
+
+
+def _menu_set_numeric_setting(key: str, label: str, minimum: int, maximum: int) -> None:
+    library = Library()
+    current = library.settings.get(key, "")
+    raw = _read_input(f"请输入新的{label}（当前：{current}，范围 {minimum}-{maximum}）：").strip()
+    if not raw:
+        return
+    try:
+        value = int(raw)
+    except ValueError:
+        print("请输入数字。")
+        _pause()
+        return
+    if value < minimum or value > maximum:
+        print(f"范围应为 {minimum}-{maximum}。")
+        _pause()
+        return
+    library.set_setting(key, str(value))
+    print(style("已保存", GREEN), f"{label}: {value}")
     _pause()
 
 
@@ -2569,26 +3085,54 @@ def _shelf_name_for_input(library: Library, raw: str) -> str | None:
 
 
 def _move_book_to_shelf_prompt(library: Library, record: BookRecord) -> None:
-    shelves = library.shelves
     print(style("移动到书架", BOLD), record.title)
-    print("0. 未归类")
-    for index, shelf in enumerate(shelves, start=1):
-        print(f"{index}. {shelf.get('name')}")
-    raw = _read_input("输入书架序号；或输入新书架名：").strip()
-    if not raw:
+    target = _select_shelf_target(library)
+    if target == "__cancel__":
         return
-    target: str | None
-    if raw == "0":
-        target = None
-    elif raw.isdigit() and 1 <= int(raw) <= len(shelves):
-        target = str(shelves[int(raw) - 1].get("name"))
-    else:
-        target = raw
     if library.move_book_to_shelf(record.id, target):
         print(style("已移动", GREEN), target or "未归类")
     else:
         print("移动失败。")
     _pause()
+
+
+def _select_shelf_target(library: Library) -> str | None:
+    shelves = library.shelves
+    print("0. 未归类")
+    for index, shelf in enumerate(shelves, start=1):
+        print(f"{index}. {shelf.get('name')}")
+    raw = _read_input("输入书架序号；或输入新书架名：").strip()
+    if not raw:
+        return "__cancel__"
+    if raw == "0":
+        return None
+    if raw.isdigit() and 1 <= int(raw) <= len(shelves):
+        return str(shelves[int(raw) - 1].get("name"))
+    return raw
+
+
+def _parse_book_selection(raw: str, books: list[BookRecord]) -> list[BookRecord]:
+    selected: list[BookRecord] = []
+    seen: set[str] = set()
+    tokens = raw.replace(",", " ").split()
+    for token in tokens:
+        numbers: list[int] = []
+        if "-" in token:
+            start_raw, _, end_raw = token.partition("-")
+            if start_raw.isdigit() and end_raw.isdigit():
+                start, end = int(start_raw), int(end_raw)
+                if start > end:
+                    start, end = end, start
+                numbers = list(range(start, end + 1))
+        elif token.isdigit():
+            numbers = [int(token)]
+        for number in numbers:
+            if 1 <= number <= len(books):
+                record = books[number - 1]
+                if record.id not in seen:
+                    selected.append(record)
+                    seen.add(record.id)
+    return selected
 
 
 def _find_book_for_input(library: Library, query: str | None) -> BookRecord | None:
@@ -2609,6 +3153,39 @@ def _ui(key: str, library: Library | None = None) -> str:
     language = (library or Library()).settings.get("language", "zh")
     values = UI_TEXT.get(key, {})
     return values.get(language, values.get("zh", key))
+
+
+def _optional_int_setting(library: Library, key: str) -> int | None:
+    try:
+        value = int(str(library.settings.get(key, "0")).strip())
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _bounded_int_setting(library: Library, key: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(str(library.settings.get(key, default)).strip())
+    except ValueError:
+        value = default
+    return min(maximum, max(minimum, value))
+
+
+def _sasayaki_seek_step(library: Library) -> int:
+    raw_step = _bounded_int_setting(library, "sasayaki_seek_step", default=5, minimum=5, maximum=30)
+    return raw_step if raw_step in {5, 10, 15, 30} else 5
+
+
+def _parse_relative_seconds(raw: str) -> float | None:
+    value = raw.strip()
+    if not value:
+        return None
+    if value[0] not in {"+", "-"}:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def _language_name(code: str) -> str:
@@ -2644,7 +3221,7 @@ def _read_reader_command(prompt: str = "", timeout: float | None = None) -> str 
     if command in {"right", "down", "left", "up", "space", ""}:
         print()
         return command
-    if command in {"r", "v", "y", "c", "t", "l", "s", "q"}:
+    if command in {"r", "v", "y", "c", "t", "l", "s", "q", "[", "]", "{", "}"}:
         print(command)
         return command
     if command == "/":
@@ -2657,6 +3234,8 @@ def _read_reader_command(prompt: str = "", timeout: float | None = None) -> str 
         return "h " + _read_input("h ")
     if command == "g":
         return "g " + _read_input("g ")
+    if command == "j":
+        return "j " + _read_input("j ")
     print(command)
     return command
 

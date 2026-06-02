@@ -22,12 +22,13 @@ class StorageTests(unittest.TestCase):
             source.write_text("星を読む。\n次のページ。", encoding="utf-8")
             library = Library(root / "state")
             record = library.import_book(source, title="Old")
-            library.add_highlight(record, "星を読む。", "note")
+            library.add_highlight(record, "星を読む。", "note", color="blue")
 
             self.assertTrue(library.rename_book(record.id, "New"))
             renamed = Library(root / "state")
             self.assertEqual(renamed.books[0].title, "New")
             self.assertEqual(renamed._state["highlights"][0]["title"], "New")
+            self.assertEqual(renamed._state["highlights"][0]["color"], "blue")
 
             self.assertTrue(renamed.mark_book_read(record.id))
             read = Library(root / "state")
@@ -67,6 +68,22 @@ class StorageTests(unittest.TestCase):
 
             reloaded = Library(root / "state")
             self.assertNotIn(second_record.id, reloaded.shelves[0]["book_ids"])
+
+    def test_detailed_bulk_import_keeps_going_after_bad_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            good = root / "good.txt"
+            bad = root / "bad.epub"
+            good.write_text("星を読む。", encoding="utf-8")
+            bad.write_bytes(b"not an epub")
+            library = Library(root / "state")
+
+            imported, skipped, failed = library.import_books_detailed([good, bad, good])
+
+        self.assertEqual(len(imported), 1)
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0][0], bad.resolve())
 
 
 if __name__ == "__main__":

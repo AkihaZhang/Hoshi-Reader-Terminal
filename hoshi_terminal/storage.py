@@ -14,7 +14,7 @@ import uuid
 from .epub import extract_book
 from .reader import character_count
 from .anki import DEFAULT_LAPIS_FIELD_MAPPINGS, DEFAULT_LAPIS_FIELD_ORDER
-from .audio import DEFAULT_LOCAL_AUDIO_PATH, default_audio_sources_json
+from .audio import DEFAULT_LOCAL_AUDIO_PATH, DEFAULT_LOCAL_AUDIO_SOURCE_CONFIG_PATH, default_audio_sources_json
 
 
 APP_NAME = "HoshiReaderTerminal"
@@ -138,14 +138,26 @@ class Library:
         raw.setdefault("anki_field_mappings", json.dumps(DEFAULT_LAPIS_FIELD_MAPPINGS, ensure_ascii=False))
         raw.setdefault("anki_tag", "hoshi")
         raw.setdefault("anki_mode", "both")
+        raw.setdefault("anki_allow_duplicates", "false")
+        raw.setdefault("anki_duplicate_scope", "collection")
+        if raw.get("anki_duplicate_scope") not in {"collection", "deck", "deckroot"}:
+            raw["anki_duplicate_scope"] = "collection"
+        raw.setdefault("anki_check_all_models", "false")
+        raw.setdefault("anki_force_sync", "false")
         raw.setdefault("audio_sources", default_audio_sources_json())
         raw.setdefault("audio_enable_local", "false")
         raw.setdefault("audio_local_db_path", str(self.root / DEFAULT_LOCAL_AUDIO_PATH))
+        raw.setdefault("audio_local_source_config_path", str(self.root / DEFAULT_LOCAL_AUDIO_SOURCE_CONFIG_PATH))
         raw.setdefault("reader_vertical", "false")
+        raw.setdefault("reader_width", "0")
+        raw.setdefault("reader_lines", "0")
         raw.setdefault("bookshelf_show_reading", "false")
         raw.setdefault("bookshelf_sort", "recent")
         if raw.get("bookshelf_sort") not in {"recent", "title"}:
             raw["bookshelf_sort"] = "recent"
+        raw.setdefault("dictionary_max_results", "16")
+        raw.setdefault("dictionary_scan_length", "16")
+        raw.setdefault("sasayaki_seek_step", "5")
         raw.setdefault("language", "zh")
         if raw.get("language") not in {"zh", "en"}:
             raw["language"] = "zh"
@@ -153,7 +165,7 @@ class Library:
 
     def set_setting(self, key: str, value: str | Path) -> None:
         settings = self._state.setdefault("settings", {})
-        if key in {"book_path", "dictionary_path", "sync_path"}:
+        if key in {"book_path", "dictionary_path", "sync_path", "audio_local_db_path", "audio_local_source_config_path"}:
             settings[key] = str(Path(value).expanduser())
         else:
             settings[key] = str(value)
@@ -183,18 +195,31 @@ class Library:
         return record
 
     def import_books(self, paths: list[Path]) -> tuple[list[BookRecord], list[Path]]:
+        imported, skipped, failed = self.import_books_detailed(paths)
+        if failed:
+            path, message = failed[0]
+            raise RuntimeError(f"{path}: {message}")
+        return imported, skipped
+
+    def import_books_detailed(self, paths: list[Path]) -> tuple[list[BookRecord], list[Path], list[tuple[Path, str]]]:
         imported: list[BookRecord] = []
         skipped: list[Path] = []
+        failed: list[tuple[Path, str]] = []
         known_sources = {book.source_path for book in self.books}
         for path in paths:
             source = path.expanduser().resolve()
             if str(source) in known_sources:
                 skipped.append(source)
                 continue
-            record = self.import_book(source)
-            imported.append(record)
-            known_sources.add(str(source))
-        return imported, skipped
+            try:
+                record = self.import_book(source)
+            except Exception as exc:
+                failed.append((source, str(exc)))
+                continue
+            else:
+                imported.append(record)
+                known_sources.add(str(source))
+        return imported, skipped, failed
 
     def rename_book(self, book_id: str, title: str) -> bool:
         title = title.strip()
@@ -350,7 +375,7 @@ class Library:
                 existing.update(asdict(statistic))
         self._save_state()
 
-    def add_highlight(self, record: BookRecord, text: str, note: str, position: int = 0) -> None:
+    def add_highlight(self, record: BookRecord, text: str, note: str, position: int = 0, color: str = "yellow") -> None:
         highlights = self._state.setdefault("highlights", [])
         highlights.append(
             {
@@ -359,6 +384,7 @@ class Library:
                 "text": text[:500],
                 "note": note,
                 "position": max(0, int(position)),
+                "color": color,
                 "created_at": _now(),
             }
         )
