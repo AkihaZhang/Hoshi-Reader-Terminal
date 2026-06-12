@@ -312,6 +312,8 @@ class CliTests(unittest.TestCase):
             (library.root / "library.json").write_text("{}", encoding="utf-8")
             old_bad_backup = library.root / "hoshi-terminal-backup-old.zip"
             old_bad_backup.write_text("do not include", encoding="utf-8")
+            auth_file = library.root / "google_drive_auth.json"
+            auth_file.write_text('{"refresh_token":"secret"}', encoding="utf-8")
 
             archive = create_backup(library)
 
@@ -320,6 +322,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("state-backups", str(archive.parent))
             with zipfile.ZipFile(archive) as backup:
                 self.assertNotIn("hoshi-terminal-backup-old.zip", backup.namelist())
+                self.assertNotIn("google_drive_auth.json", backup.namelist())
 
     def test_category_backup_and_restore_books(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -339,6 +342,19 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(restored.books), 1)
         self.assertEqual(restored.books[0].title, "Book")
         self.assertEqual(restored.shelf_for(restored.books[0].id), "Shelf")
+
+    def test_full_restore_preserves_local_google_drive_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library = Library(root / "state")
+            library.state_file.write_text('{"books":[]}', encoding="utf-8")
+            archive = create_backup(library)
+            auth_file = library.root / "google_drive_auth.json"
+            auth_file.write_text('{"refresh_token":"keep-me"}', encoding="utf-8")
+
+            restore_backup(library, archive, "all")
+
+            self.assertEqual(auth_file.read_text(encoding="utf-8"), '{"refresh_token":"keep-me"}')
 
     def test_category_backup_and_restore_dictionaries(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

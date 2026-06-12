@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Hoshi Reader Terminal is a cross-platform terminal reader for Japanese books. It provides a bookshelf, paginated reading, Yomitan dictionary lookup, Anki card creation, Sasayaki audiobook matching, reading statistics, and local TTU-style progress sync.
+Hoshi Reader Terminal is a cross-platform terminal reader for Japanese books. It provides a bookshelf, paginated reading, Yomitan dictionary lookup, Anki card creation, Sasayaki audiobook matching, reading statistics, and Google Drive based ッツ/TTU sync.
 
 It follows the structure of Hoshi Reader iOS and Android where terminal interaction makes sense.
 
@@ -33,7 +33,7 @@ It follows the structure of Hoshi Reader iOS and Android where terminal interact
 - Sasayaki flow for SubPlz `.srt` matching, local or online audio, cue navigation, cue highlighting, playback position, delay, and speed.
 - CSV card export and AnkiConnect card creation with Hoshi/Lapis-style default fields.
 - Word audio from online sources or an Ankiconnect Android `android.db` local audio database.
-- Local progress/statistics sync using a `ttu-reader-data` style folder.
+- Google Drive `ttu-reader-data` sync for reading progress, statistics, Sasayaki playback position, and book data. A local-folder backend remains available for compatibility and debugging.
 - Simplified Chinese and English interface labels.
 - GitHub Release update checks and in-place portable updates.
 
@@ -57,13 +57,13 @@ Then run:
 hoshi
 ```
 
-Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.19):
+Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.20):
 
 | OS | Package |
 | --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.19-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.19-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.19-linux.tar.gz` |
+| Windows | `Hoshi-Reader-Terminal-0.1.20-windows.zip` |
+| macOS | `Hoshi-Reader-Terminal-0.1.20-macos.tar.gz` |
+| Linux | `Hoshi-Reader-Terminal-0.1.20-linux.tar.gz` |
 
 Python 3.10+ is required.
 
@@ -79,7 +79,12 @@ hoshi dict-import PATH        Import a Yomitan dictionary
 hoshi dict-list [TYPE]        List Term / Frequency / Pitch dictionaries
 hoshi dict-order TYPE FROM TO Reorder dictionaries
 hoshi card WORD               Create a CSV/AnkiConnect card
+hoshi sync connect            Connect Google Drive
+hoshi sync status             Show connection status
 hoshi sync [auto|export|import]
+hoshi sync books              List the remote TTU library
+hoshi sync get --book BOOK    Import a book from bookdata
+hoshi sync local --path PATH  Use the local compatibility backend
 hoshi sasayaki status BOOK
 hoshi sasayaki match BOOK SRT --audio AUDIO
 hoshi settings
@@ -88,6 +93,16 @@ hoshi update -y
 ```
 
 Chinese aliases such as `菜单`, `导入`, `书架`, `阅读`, `查词`, `导入词典`, `制卡`, `统计`, `同步`, `有声书`, `设置`, `诊断`, `检查更新`, and `更新` are also supported.
+
+## Google Drive / ッツ Sync
+
+1. Enable the Google Drive API in a Google Cloud project and add the `https://www.googleapis.com/auth/drive.file` scope.
+2. Create an OAuth client of type **TVs and Limited Input devices**.
+3. Run `hoshi sync connect` and enter the Client ID and Client Secret.
+4. Google opens a device authorization page; enter the code printed in the terminal.
+5. Run `hoshi sync auto`, or use Settings -> Advanced -> Sync.
+
+OAuth credentials are stored in `google_drive_auth.json` inside the application data directory. The file uses mode `0600` on macOS/Linux and is excluded from Hoshi Reader Terminal backups.
 
 ## Data Directory
 

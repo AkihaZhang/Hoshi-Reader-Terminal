@@ -62,7 +62,23 @@ from .sasayaki import (
     previous_cue,
 )
 from .storage import BookRecord, DailyStatistic, Library, summarize_text_progress
-from .sync import TTU_ROOT, sync_book, sync_library
+from .drive import (
+    DeviceCodePrompt,
+    DriveAuthError,
+    DriveAuthorizationRequired,
+    DriveFile,
+    GoogleDriveClient,
+)
+from .sync import (
+    TTU_ROOT,
+    google_drive_authorizer,
+    import_google_drive_book,
+    list_google_drive_books,
+    sync_book,
+    sync_google_drive,
+    sync_google_drive_book,
+    sync_library,
+)
 from .terminal import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, YELLOW, banner, clear_screen, style, terminal_size
 from .updates import check_for_updates, format_update_info, format_update_install_result, install_latest_update
 
@@ -225,9 +241,20 @@ def build_parser() -> argparse.ArgumentParser:
     stats = subparsers.add_parser("stats", aliases=["统计"], help="显示阅读统计")
     stats.set_defaults(func=cmd_stats)
 
-    sync = subparsers.add_parser("sync", aliases=["同步"], help="同步阅读进度")
-    sync.add_argument("direction", nargs="?", default="auto", choices=["auto", "export", "import", "自动", "导出", "导入"])
-    sync.add_argument("--path", metavar="目录", help="临时指定同步目录并保存")
+    sync = subparsers.add_parser("sync", aliases=["同步"], help="通过 Google Drive 同步 TTU 阅读数据")
+    sync.add_argument(
+        "direction",
+        nargs="?",
+        default="auto",
+        metavar="操作",
+        help="auto/export/import/connect/status/disconnect/books/get/local",
+    )
+    sync.add_argument("--path", metavar="目录", help="本地兼容后端目录")
+    sync.add_argument("--local", action="store_true", help="使用本地目录兼容后端")
+    sync.add_argument("--client-id", help="Google OAuth Client ID")
+    sync.add_argument("--client-secret", help="Google OAuth Client Secret")
+    sync.add_argument("--no-browser", action="store_true", help="授权时不自动打开浏览器")
+    sync.add_argument("--book", help="远端书籍序号或标题片段")
     sync.set_defaults(func=cmd_sync)
 
     sasayaki = subparsers.add_parser("sasayaki", aliases=["有声书", "低语"], help="Sasayaki 有声书匹配和播放")
@@ -449,11 +476,112 @@ def _reading_speed(characters: int, seconds: float) -> int:
 
 def cmd_sync(args: argparse.Namespace) -> int:
     library = Library()
+    action = _normalize_sync_action(args.direction)
     if args.path:
         library.set_setting("sync_path", args.path)
-    for message in sync_library(library, args.direction):
+        library.set_setting("sync_provider", "local")
+    if action == "connect":
+        _connect_google_drive(
+            library,
+            client_id=args.client_id,
+            client_secret=args.client_secret,
+            open_browser=not args.no_browser,
+        )
+        return 0
+    authorizer = google_drive_authorizer(library)
+    if action == "status":
+        print(_google_drive_status_text(authorizer.status()))
+        return 0
+    if action == "disconnect":
+        authorizer.disconnect()
+        print("已在本机断开 Google Drive。Google 账号中的授权和远端文件没有删除。")
+        return 0
+    if action in {"books", "get"}:
+        drive, books = list_google_drive_books(library)
+        if not books:
+            print("Google Drive 的 ttu-reader-data 中没有书籍。")
+            return 0
+        if action == "books":
+            _print_remote_books(books)
+            return 0
+        query = args.book
+        if not query and sys.stdin.isatty():
+            _print_remote_books(books)
+            query = _read_input("输入远端书籍序号或标题片段：").strip()
+        folder = _find_remote_book(books, query)
+        if folder is None:
+            raise ValueError("找不到这本远端书。")
+        record = import_google_drive_book(library, folder, drive)
+        print(style("已导入", GREEN), record.title)
+        return 0
+    use_local = args.local or action == "local" or library.settings.get("sync_provider") == "local"
+    direction = "auto" if action == "local" else action
+    runner = sync_library if use_local else sync_google_drive
+    for message in runner(library, direction):
         print(message)
     return 0
+
+
+def _normalize_sync_action(value: str) -> str:
+    aliases = {
+        "auto": "auto",
+        "自动": "auto",
+        "export": "export",
+        "导出": "export",
+        "import": "import",
+        "导入": "import",
+        "connect": "connect",
+        "连接": "connect",
+        "status": "status",
+        "状态": "status",
+        "disconnect": "disconnect",
+        "断开": "disconnect",
+        "books": "books",
+        "书籍": "books",
+        "get": "get",
+        "获取": "get",
+        "local": "local",
+        "本地": "local",
+    }
+    action = aliases.get(str(value).strip().lower())
+    if action is None:
+        raise ValueError("同步操作只能是 auto/export/import/connect/status/disconnect/books/get/local")
+    return action
+
+
+def _connect_google_drive(
+    library: Library,
+    *,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    open_browser: bool = True,
+) -> None:
+    authorizer = google_drive_authorizer(library)
+    stored = authorizer.store.load()
+    client_id = (client_id or str(stored.get("client_id", ""))).strip()
+    client_secret = (client_secret or str(stored.get("client_secret", ""))).strip()
+    if not client_id and sys.stdin.isatty():
+        client_id = _read_input("Google OAuth Client ID：").strip()
+    if not client_secret and sys.stdin.isatty():
+        client_secret = _read_input("Google OAuth Client Secret：").strip()
+    authorizer.configure(client_id, client_secret)
+
+    def show_prompt(prompt: DeviceCodePrompt) -> None:
+        print(f"打开: {prompt.verification_url}")
+        print(style(f"授权码: {prompt.user_code}", BOLD + CYAN))
+        print("完成 Google 授权后保持本程序运行。")
+
+    authorizer.authorize(on_prompt=show_prompt, open_browser=open_browser)
+    library.set_setting("sync_provider", "google_drive")
+    print(style("Google Drive 已连接。", GREEN))
+
+
+def _google_drive_status_text(status: str) -> str:
+    return {
+        "connected": "Google Drive: 已连接",
+        "not_connected": "Google Drive: 已配置 OAuth 客户端，尚未授权",
+        "missing_configuration": "Google Drive: 尚未配置 OAuth 客户端",
+    }.get(status, f"Google Drive: {status}")
 
 
 def cmd_sasayaki(args: argparse.Namespace) -> int:
@@ -494,7 +622,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"数据目录: {library.root}")
     print(f"终端尺寸: {columns}x{rows}")
     print(f"书籍数量: {len(library.books)}")
-    print(f"同步目录: {library.settings['sync_path']}")
+    print(_google_drive_status_text(google_drive_authorizer(library).status()))
+    print(f"本地同步兼容目录: {library.settings['sync_path']}")
     print(f"词典文件: {library.dictionary_file}")
     print(style("诊断结果", YELLOW), "正常")
     return 0
@@ -1738,9 +1867,10 @@ def _book_action_menu(record: BookRecord) -> None:
                 print(style("标记失败。", RED))
             _pause()
         elif choice == "4":
-            sync_root = Path(library.settings["sync_path"]).expanduser() / TTU_ROOT
-            sync_root.mkdir(parents=True, exist_ok=True)
-            print(sync_book(library, record, sync_root, "auto"))
+            try:
+                print(_sync_one_book(library, record))
+            except Exception as exc:
+                print(style(f"同步失败：{exc}", RED))
             _pause()
         elif choice == "5":
             srt = _read_input("SRT 路径（留空返回）：").strip().strip('"')
@@ -2638,28 +2768,197 @@ def _sasayaki_playback_setting(library: Library, record: BookRecord, key: str, v
 
 def _advanced_sync() -> None:
     library = Library()
+    settings = library.settings
+    authorizer = google_drive_authorizer(library)
     print(style("同步", BOLD))
-    print(f"同步目录: {library.settings['sync_path']}")
-    print("1. 自动同步阅读进度")
-    print("2. 导出到同步目录")
-    print("3. 从同步目录导入")
-    print("4. 设置同步目录")
+    print(_google_drive_status_text(authorizer.status()))
+    print(
+        "同步内容: "
+        f"统计 {_on_off(settings.get('sync_statistics'))} / "
+        f"有声书 {_on_off(settings.get('sync_audiobook'))} / "
+        f"书籍数据 {_on_off(settings.get('sync_upload_books'))}"
+    )
+    print("1. 连接 / 重新连接 Google Drive")
+    print("2. 自动判断并同步")
+    print("3. 上传到 Google Drive")
+    print("4. 从 Google Drive 下载")
+    print("5. 从 Google Drive 导入书籍")
+    print("6. 同步选项")
+    print("7. 断开 Google Drive")
+    print("8. 本地目录兼容后端")
     print("0. 返回")
     choice = _read_input(style("请选择：", CYAN)).strip()
     if choice == "1":
-        for message in sync_library(library, "auto"):
-            print(message)
+        try:
+            _connect_google_drive(library)
+        except Exception as exc:
+            print(style(f"连接失败：{exc}", RED))
         _pause()
     elif choice == "2":
-        for message in sync_library(library, "export"):
-            print(message)
+        _run_google_drive_sync_menu(library, "auto")
         _pause()
     elif choice == "3":
-        for message in sync_library(library, "import"):
+        _run_google_drive_sync_menu(library, "export")
+        _pause()
+    elif choice == "4":
+        _run_google_drive_sync_menu(library, "import")
+        _pause()
+    elif choice == "5":
+        _remote_book_import_menu(library)
+    elif choice == "6":
+        _sync_options_menu()
+    elif choice == "7":
+        authorizer.disconnect()
+        print("已在本机断开。远端 ttu-reader-data 未删除。")
+        _pause()
+    elif choice == "8":
+        _local_sync_menu()
+
+
+def _remote_book_import_menu(library: Library) -> None:
+    try:
+        drive, books = list_google_drive_books(library)
+        if not books:
+            print("Google Drive 的 ttu-reader-data 中没有书籍。")
+            _pause()
+            return
+        _print_remote_books(books)
+        query = _read_input("输入远端书籍序号或标题片段（留空返回）：").strip()
+        if not query:
+            return
+        folder = _find_remote_book(books, query)
+        if folder is None:
+            print(style("找不到这本远端书。", RED))
+        else:
+            record = import_google_drive_book(library, folder, drive)
+            print(style("已导入", GREEN), record.title)
+    except Exception as exc:
+        print(style(f"导入失败：{exc}", RED))
+    _pause()
+
+
+def _print_remote_books(books: list[DriveFile]) -> None:
+    from .sync import desanitize_ttu_filename
+
+    print(style("Google Drive 书籍", BOLD))
+    for index, folder in enumerate(books, start=1):
+        print(f"{index}. {desanitize_ttu_filename(folder.name)}")
+
+
+def _find_remote_book(books: list[DriveFile], query: str | None) -> DriveFile | None:
+    from .sync import desanitize_ttu_filename
+
+    if not query:
+        return None
+    cleaned = query.strip()
+    if cleaned.isdigit():
+        index = int(cleaned) - 1
+        return books[index] if 0 <= index < len(books) else None
+    lowered = cleaned.casefold()
+    exact = [
+        folder
+        for folder in books
+        if desanitize_ttu_filename(folder.name).casefold() == lowered
+    ]
+    if exact:
+        return exact[0]
+    return next(
+        (
+            folder
+            for folder in books
+            if lowered in desanitize_ttu_filename(folder.name).casefold()
+        ),
+        None,
+    )
+
+
+def _run_google_drive_sync_menu(library: Library, direction: str) -> None:
+    try:
+        for message in sync_google_drive(library, direction):
+            print(message)
+    except (DriveAuthError, DriveAuthorizationRequired) as exc:
+        print(style(f"Google Drive 未连接：{exc}", RED))
+    except Exception as exc:
+        print(style(f"同步失败：{exc}", RED))
+
+
+def _sync_options_menu() -> None:
+    library = Library()
+    settings = library.settings
+    print(style("同步选项", BOLD))
+    print(f"1. 阅读统计: {_on_off(settings.get('sync_statistics'))}")
+    print(f"2. 统计冲突: {'合并' if settings.get('sync_statistics_mode') == 'merge' else '以同步来源替换'}")
+    print(f"3. Sasayaki 进度: {_on_off(settings.get('sync_audiobook'))}")
+    print(f"4. 首次同步上传书籍数据: {_on_off(settings.get('sync_upload_books'))}")
+    print("0. 返回")
+    choice = _read_input(style("请选择：", CYAN)).strip()
+    if choice == "1":
+        _toggle_setting(library, "sync_statistics")
+    elif choice == "2":
+        next_mode = "replace" if settings.get("sync_statistics_mode") == "merge" else "merge"
+        library.set_setting("sync_statistics_mode", next_mode)
+        print(style("已保存", GREEN), "合并" if next_mode == "merge" else "替换")
+    elif choice == "3":
+        _toggle_setting(library, "sync_audiobook")
+    elif choice == "4":
+        _toggle_setting(library, "sync_upload_books")
+    if choice != "0":
+        _pause()
+
+
+def _local_sync_menu() -> None:
+    library = Library()
+    print(style("本地目录兼容后端", BOLD))
+    print("该模式只读写本地 ttu-reader-data，不连接 Google Drive。")
+    print(f"目录: {library.settings['sync_path']}")
+    print("1. 自动")
+    print("2. 导出")
+    print("3. 导入")
+    print("4. 设置目录")
+    print("0. 返回")
+    choice = _read_input(style("请选择：", CYAN)).strip()
+    if choice in {"1", "2", "3"}:
+        direction = {"1": "auto", "2": "export", "3": "import"}[choice]
+        for message in sync_library(library, direction):
             print(message)
         _pause()
     elif choice == "4":
-        _menu_set_path("sync_path", "同步目录")
+        _menu_set_path("sync_path", "本地同步目录")
+
+
+def _sync_one_book(library: Library, record: BookRecord) -> str:
+    if library.settings.get("sync_provider") == "local":
+        sync_root = Path(library.settings["sync_path"]).expanduser() / TTU_ROOT
+        sync_root.mkdir(parents=True, exist_ok=True)
+        return sync_book(library, record, sync_root, "auto")
+    drive = GoogleDriveClient(google_drive_authorizer(library))
+    root_folder_id = drive.find_root_folder()
+    settings = library.settings
+    return sync_google_drive_book(
+        library,
+        record,
+        drive,
+        root_folder_id,
+        "auto",
+        sync_statistics=_is_true(settings.get("sync_statistics")),
+        statistics_mode=settings.get("sync_statistics_mode", "merge"),
+        sync_audiobook=_is_true(settings.get("sync_audiobook")),
+        upload_book=_is_true(settings.get("sync_upload_books")),
+    )
+
+
+def _is_true(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "是", "开启"}
+
+
+def _on_off(value: object) -> str:
+    return "开启" if _is_true(value) else "关闭"
+
+
+def _toggle_setting(library: Library, key: str) -> None:
+    enabled = not _is_true(library.settings.get(key))
+    library.set_setting(key, "true" if enabled else "false")
+    print(style("已保存", GREEN), _on_off(enabled))
 
 
 def _advanced_backup() -> None:
@@ -2734,7 +3033,13 @@ def restore_backup(library: Library, archive_path: str | Path, category: str = "
                     raise ValueError("备份包内路径不安全。")
             backup.extractall(extract_root)
         if category == "all":
+            auth_file = root / "google_drive_auth.json"
+            auth_data = auth_file.read_bytes() if auth_file.is_file() else None
             _replace_directory_contents(root, extract_root)
+            if auth_data is not None:
+                auth_file.write_bytes(auth_data)
+                if os.name != "nt":
+                    auth_file.chmod(0o600)
         elif category == "books":
             source_books = extract_root / "books"
             if source_books.exists():
@@ -2752,7 +3057,11 @@ def restore_backup(library: Library, archive_path: str | Path, category: str = "
 def _backup_paths(library: Library, category: str) -> list[Path]:
     root = library.root.resolve()
     if category == "all":
-        return sorted(path for path in root.rglob("*") if path.is_file())
+        return sorted(
+            path
+            for path in root.rglob("*")
+            if path.is_file() and path.name != "google_drive_auth.json"
+        )
     if category == "books":
         paths = [library.state_file]
         if library.books_dir.exists():

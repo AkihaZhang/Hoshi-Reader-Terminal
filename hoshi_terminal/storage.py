@@ -33,6 +33,7 @@ class BookRecord:
     last_access: str
     position: int = 0
     characters_read: int = 0
+    progress_modified_at: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "BookRecord":
@@ -46,6 +47,7 @@ class BookRecord:
             last_access=str(data.get("last_access", "")),
             position=int(data.get("position", 0)),
             characters_read=int(data.get("characters_read", 0)),
+            progress_modified_at=_progress_modified_at(data),
         )
 
 
@@ -123,6 +125,15 @@ class Library:
         raw.setdefault("dictionary_path", str(DEFAULT_DICTIONARY_PATH))
         raw.setdefault("book_path", str(Path.cwd()))
         raw.setdefault("sync_path", str(DEFAULT_SYNC_PATH))
+        raw.setdefault("sync_provider", "google_drive")
+        if raw.get("sync_provider") not in {"google_drive", "local"}:
+            raw["sync_provider"] = "google_drive"
+        raw.setdefault("sync_statistics", "true")
+        raw.setdefault("sync_statistics_mode", "merge")
+        if raw.get("sync_statistics_mode") not in {"merge", "replace"}:
+            raw["sync_statistics_mode"] = "merge"
+        raw.setdefault("sync_audiobook", "true")
+        raw.setdefault("sync_upload_books", "true")
         raw.setdefault("ankiconnect_url", "http://127.0.0.1:8765")
         if raw.get("anki_template_version") != "lapis-v1":
             if raw.get("anki_deck", "Hoshi Reader Terminal") == "Hoshi Reader Terminal":
@@ -316,6 +327,7 @@ class Library:
                 item["position"] = max(0, position)
                 item["characters_read"] = int(item.get("characters_read", 0)) + max(0, characters_delta)
                 item["last_access"] = _now()
+                item["progress_modified_at"] = int(time.time() * 1000)
                 break
         self.add_statistic(record.title, characters_delta, seconds)
         self._save_state()
@@ -326,6 +338,7 @@ class Library:
             if item.get("id") == book_id:
                 item["position"] = max(0, int(position))
                 item["last_access"] = _from_unix_ms(timestamp_ms) if timestamp_ms else _now()
+                item["progress_modified_at"] = int(timestamp_ms or time.time() * 1000)
                 break
         self._save_state()
 
@@ -373,6 +386,16 @@ class Library:
                 continue
             if statistic.last_statistic_modified > int(existing.get("last_statistic_modified", 0)):
                 existing.update(asdict(statistic))
+        self._save_state()
+
+    def replace_statistics_for_title(self, title: str, statistics: list[DailyStatistic]) -> None:
+        retained = [
+            item
+            for item in self._state.setdefault("statistics", [])
+            if str(item.get("title", "")) != title
+        ]
+        retained.extend(asdict(item) for item in statistics if item.title == title)
+        self._state["statistics"] = retained
         self._save_state()
 
     def add_highlight(self, record: BookRecord, text: str, note: str, position: int = 0, color: str = "yellow") -> None:
@@ -522,6 +545,16 @@ class Library:
     def _save_state(self) -> None:
         with self.state_file.open("w", encoding="utf-8") as handle:
             json.dump(self._state, handle, ensure_ascii=False, indent=2)
+
+
+def _progress_modified_at(data: dict[str, object]) -> int:
+    stored = int(data.get("progress_modified_at", 0) or 0)
+    if stored > 0 or int(data.get("position", 0) or 0) <= 0:
+        return stored
+    try:
+        return int(datetime.fromisoformat(str(data.get("last_access", ""))).timestamp() * 1000)
+    except ValueError:
+        return 0
 
 
 def data_dir() -> Path:

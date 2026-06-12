@@ -52,7 +52,24 @@ def main() -> int:
             ),
             "02-reader.svg": _run(["python3", "-m", "hoshi_terminal", "阅读", "1", "--print", "--vertical"], home=home),
             "03-dictionary.svg": _run(["python3", "-m", "hoshi_terminal", "查词", "秋"]),
-            "04-sync.svg": _run(["python3", "-m", "hoshi_terminal", "同步", "export", "--path", str(sync)], home=home),
+            "04-sync.svg": _snippet(
+                """
+                print("同步")
+                print("Google Drive: 已连接")
+                print("同步内容: 统计 开启 / 有声书 开启 / 书籍数据 开启")
+                print("1. 连接 / 重新连接 Google Drive")
+                print("2. 自动判断并同步")
+                print("3. 上传到 Google Drive")
+                print("4. 从 Google Drive 下载")
+                print("5. 从 Google Drive 导入书籍")
+                print("6. 同步选项")
+                print("7. 断开 Google Drive")
+                print("8. 本地目录兼容后端")
+                print("0. 返回")
+                print("请选择：")
+                """,
+                color=True,
+            ),
             "05-settings.svg": _snippet(
                 """
                 from hoshi_terminal.terminal import banner

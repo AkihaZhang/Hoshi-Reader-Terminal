@@ -2,10 +2,23 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from hoshi_terminal.storage import Library
+from hoshi_terminal.storage import BookRecord, Library
 
 
 class StorageTests(unittest.TestCase):
+    def test_legacy_reading_progress_uses_last_access_as_sync_timestamp(self) -> None:
+        record = BookRecord.from_dict(
+            {
+                "id": "book",
+                "title": "Book",
+                "stored_path": "/tmp/book.txt",
+                "last_access": "2026-06-12T12:00:00",
+                "position": 10,
+            }
+        )
+
+        self.assertGreater(record.progress_modified_at, 0)
+
     def test_removed_language_settings_fall_back_to_chinese(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             library = Library(Path(temp_dir) / "state")
