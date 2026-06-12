@@ -6,7 +6,6 @@ from urllib import request
 from urllib.error import HTTPError, URLError
 import os
 import json
-import platform
 import re
 import shutil
 import sys
@@ -151,28 +150,16 @@ def resolve_update_target(target: str | Path | None = None) -> Path:
 
 
 def release_asset_for_platform(info: UpdateInfo) -> ReleaseAsset:
-    platform_name = package_platform()
-    expected = f"Hoshi-Reader-Terminal-{info.latest_version}-{platform_name}"
-    suffix = ".zip" if platform_name == "windows" else ".tar.gz"
-    expected += suffix
+    expected = "hoshi-terminal.pyz"
     for asset in info.assets:
         if asset.name == expected:
             return asset
-    raise RuntimeError(f"Release 中没有当前系统安装包：{expected}")
-
-
-def package_platform() -> str:
-    system = platform.system()
-    if system == "Darwin":
-        return "macos"
-    if system == "Windows":
-        return "windows"
-    if system == "Linux":
-        return "linux"
-    raise RuntimeError(f"暂不支持自动更新当前系统：{system}")
+    raise RuntimeError(f"Release 中没有通用程序包：{expected}")
 
 
 def extract_pyz_from_package(package: Path, destination: Path) -> Path:
+    if package.suffix == ".pyz":
+        return package
     destination.mkdir(parents=True, exist_ok=True)
     if package.suffix == ".zip":
         with zipfile.ZipFile(package) as archive:

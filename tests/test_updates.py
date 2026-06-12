@@ -9,7 +9,6 @@ from hoshi_terminal.updates import (
     _version_key,
     extract_pyz_from_package,
     format_update_info,
-    package_platform,
     release_asset_for_platform,
 )
 
@@ -34,10 +33,8 @@ class UpdateTests(unittest.TestCase):
         self.assertIn("install.sh", text)
         self.assertIn("install.ps1", text)
 
-    def test_release_asset_for_platform_selects_current_package(self) -> None:
-        platform_name = package_platform()
-        suffix = ".zip" if platform_name == "windows" else ".tar.gz"
-        asset_name = f"Hoshi-Reader-Terminal-0.2.0-{platform_name}{suffix}"
+    def test_release_asset_for_platform_selects_universal_pyz(self) -> None:
+        asset_name = "hoshi-terminal.pyz"
         asset = release_asset_for_platform(
             UpdateInfo(
                 current_version="0.1.0",
@@ -49,6 +46,15 @@ class UpdateTests(unittest.TestCase):
         )
 
         self.assertEqual(asset.name, asset_name)
+
+    def test_extract_pyz_accepts_universal_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package = Path(temp_dir) / "hoshi-terminal.pyz"
+            package.write_text("pyz", encoding="utf-8")
+
+            extracted = extract_pyz_from_package(package, Path(temp_dir) / "out")
+
+        self.assertEqual(extracted, package)
 
     def test_extract_pyz_from_zip_package(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

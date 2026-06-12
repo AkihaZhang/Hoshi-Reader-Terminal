@@ -33,19 +33,16 @@ if (-not $Tag) {
     throw "无法获取最新版本。"
 }
 $Version = $Tag.TrimStart("v")
-$Asset = "Hoshi-Reader-Terminal-$Version-windows.zip"
+$Asset = "hoshi-terminal.pyz"
 $Url = "$DownloadBase/$Tag/$Asset"
 $Temp = Join-Path ([System.IO.Path]::GetTempPath()) ("hoshi-reader-terminal-" + [System.Guid]::NewGuid().ToString("N"))
-$Zip = Join-Path $Temp $Asset
-$Unpack = Join-Path $Temp "unpack"
+$Download = Join-Path $Temp $Asset
 
-New-Item -ItemType Directory -Force -Path $Temp, $Unpack, $Target | Out-Null
+New-Item -ItemType Directory -Force -Path $Temp, $Target | Out-Null
 try {
     Write-Host "下载 $Asset"
-    Invoke-WebRequest -Uri $Url -OutFile $Zip
-    Expand-Archive -Path $Zip -DestinationPath $Unpack -Force
-    $Package = Join-Path $Unpack "Hoshi-Reader-Terminal-$Version-windows"
-    Copy-Item -Path (Join-Path $Package "hoshi-terminal.pyz") -Destination (Join-Path $Target "hoshi-terminal.pyz") -Force
+    Invoke-WebRequest -Uri $Url -OutFile $Download
+    Copy-Item -Path $Download -Destination (Join-Path $Target "hoshi-terminal.pyz") -Force
 
     $Launcher = @"
 @echo off

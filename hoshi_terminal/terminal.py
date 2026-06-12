@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
 import shutil
 import sys
 import textwrap
+from typing import Iterator
 
 
 RESET = "\033[0m"
@@ -14,6 +16,10 @@ GREEN = "\033[32m"
 YELLOW = "\033[33m"
 MAGENTA = "\033[35m"
 RED = "\033[31m"
+ALT_SCREEN_ENTER = "\033[?1049h"
+ALT_SCREEN_EXIT = "\033[?1049l"
+CURSOR_HIDE = "\033[?25l"
+CURSOR_SHOW = "\033[?25h"
 
 
 def ansi_enabled() -> bool:
@@ -43,6 +49,35 @@ def clear_screen() -> str:
     if not ansi_enabled():
         return "\n" * 3
     return "\033[3J\033[2J\033[H"
+
+
+def draw_screen(frame: str) -> None:
+    if not ansi_enabled():
+        print(clear_screen(), end="")
+        print(frame)
+        return
+    sys.stdout.write(f"\033[H{frame}\033[J")
+    sys.stdout.flush()
+
+
+def set_cursor_visible(visible: bool) -> None:
+    if ansi_enabled():
+        sys.stdout.write(CURSOR_SHOW if visible else CURSOR_HIDE)
+        sys.stdout.flush()
+
+
+@contextmanager
+def reader_screen() -> Iterator[None]:
+    active = ansi_enabled() and sys.stdin.isatty() and sys.stdout.isatty()
+    if active:
+        sys.stdout.write(ALT_SCREEN_ENTER + CURSOR_HIDE + "\033[H\033[2J")
+        sys.stdout.flush()
+    try:
+        yield
+    finally:
+        if active:
+            sys.stdout.write(CURSOR_SHOW + ALT_SCREEN_EXIT)
+            sys.stdout.flush()
 
 
 def terminal_size(default_columns: int = 88, default_rows: int = 28) -> tuple[int, int]:

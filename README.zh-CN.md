@@ -57,15 +57,9 @@ irm https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest/download
 hoshi
 ```
 
-三系统便携包在 [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.20)：
+Windows、macOS 和 Linux 使用 [最新 GitHub Release](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest) 中同一个 `hoshi-terminal.pyz`。两个安装脚本只负责适配不同系统的 Shell 和 PATH。
 
-| 系统 | 安装包 |
-| --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.20-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.20-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.20-linux.tar.gz` |
-
-运行需要 Python 3.10 或更高版本。
+运行需要 Python 3.10 或更高版本；这个 Release 资产是跨平台 Python 应用归档，不包含 Python 运行时。
 
 ## 常用命令
 

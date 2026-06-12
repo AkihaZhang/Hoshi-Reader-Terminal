@@ -43,6 +43,7 @@ class Page:
     start_char: int
     end_char: int
     text: str
+    source_positions: tuple[int | None, ...] = ()
 
 
 def character_count(text: str) -> int:
@@ -53,27 +54,65 @@ def paginate(text: str, width: int | None = None, lines_per_page: int | None = N
     columns, rows = terminal_size()
     width = width or min(96, max(40, columns - 4))
     lines_per_page = lines_per_page or max(8, rows - 8)
-    wrapped = wrap_paragraphs(text, width)
+    width = max(1, width)
+    lines_per_page = max(1, lines_per_page)
+    wrapped = _wrapped_source_lines(text, width)
     pages: list[Page] = []
-    current: list[str] = []
-    start_char = 0
-    cursor = 0
-
-    for line in wrapped:
-        if len(current) >= lines_per_page:
-            page_text = "\n".join(current).strip()
-            end_char = cursor
-            pages.append(Page(len(pages), start_char, end_char, page_text))
-            start_char = end_char
-            current = []
-        current.append(line)
-        cursor += len(line)
-
-    if current:
-        page_text = "\n".join(current).strip()
-        pages.append(Page(len(pages), start_char, max(cursor, start_char + len(page_text)), page_text))
+    for start in range(0, len(wrapped), lines_per_page):
+        group = wrapped[start : start + lines_per_page]
+        chars: list[str] = []
+        positions: list[int | None] = []
+        for line_index, (line_text, line_positions, _, _) in enumerate(group):
+            if line_index:
+                chars.append("\n")
+                positions.append(None)
+            chars.extend(line_text)
+            positions.extend(line_positions)
+        pages.append(
+            Page(
+                index=len(pages),
+                start_char=group[0][2],
+                end_char=group[-1][3],
+                text="".join(chars),
+                source_positions=tuple(positions),
+            )
+        )
 
     return pages or [Page(0, 0, 0, "这本书看起来只有气氛，没有文字。")]
+
+
+def _wrapped_source_lines(text: str, width: int) -> list[tuple[str, tuple[int, ...], int, int]]:
+    lines: list[tuple[str, tuple[int, ...], int, int]] = []
+    chars: list[str] = []
+    positions: list[int] = []
+    line_start = 0
+    used = 0
+
+    def flush(end: int) -> None:
+        nonlocal chars, positions, line_start, used
+        lines.append(("".join(chars), tuple(positions), line_start, end))
+        chars = []
+        positions = []
+        line_start = end
+        used = 0
+
+    for index, char in enumerate(text):
+        if char == "\r" and index + 1 < len(text) and text[index + 1] == "\n":
+            continue
+        if char in {"\n", "\r"}:
+            flush(index + 1)
+            continue
+        visible = " " if char == "\t" else char
+        char_width = max(0, terminal_cell_width(visible))
+        if chars and used + char_width > width:
+            flush(index)
+        chars.append(visible)
+        positions.append(index)
+        used += char_width
+
+    if chars or not lines or line_start < len(text):
+        flush(len(text))
+    return lines
 
 
 def page_for_position(pages: list[Page], position: int) -> int:
@@ -90,14 +129,23 @@ def render_page(
     total_pages: int,
     vertical: bool = False,
     highlight: str | None = None,
+    highlight_range: tuple[int, int] | None = None,
     sasayaki_status: str | None = None,
 ) -> str:
     if vertical:
-        return render_vertical_page(title, page, total_pages, highlight=highlight, sasayaki_status=sasayaki_status)
+        return render_vertical_page(
+            title,
+            page,
+            total_pages,
+            highlight=highlight,
+            highlight_range=highlight_range,
+            sasayaki_status=sasayaki_status,
+        )
 
     header = style(title, BOLD) + style(f"  第 {page.index + 1}/{total_pages} 页", DIM)
     ruler = style("─" * min(96, max(24, len(header))), CYAN)
-    page_text = highlight_sentence(page.text, highlight) if highlight else page.text
+    ranges = _page_highlight_ranges(page, highlight_range)
+    page_text = _style_ranges(page.text, ranges) if ranges else highlight_sentence(page.text, highlight)
     content = page_text
     status = [style(f"Sasayaki: {sasayaki_status}", CYAN)] if sasayaki_status else []
     footer = "\n".join(
@@ -114,6 +162,7 @@ def render_vertical_page(
     page: Page,
     total_pages: int,
     highlight: str | None = None,
+    highlight_range: tuple[int, int] | None = None,
     sasayaki_status: str | None = None,
 ) -> str:
     columns, terminal_rows = terminal_size(default_columns=120, default_rows=36)
@@ -126,7 +175,15 @@ def render_vertical_page(
         _layout_line(progress, width, align="right", fg=READER_MUTED, bold=True),
         _layout_line("", width),
     ]
-    body = render_vertical(page.text, rows=content_rows, highlight=highlight, paper=True, max_columns=max_columns).splitlines()
+    absolute_ranges = _page_highlight_ranges(page, highlight_range) if highlight_range is not None else None
+    body = render_vertical(
+        page.text,
+        rows=content_rows,
+        highlight=highlight,
+        highlight_ranges=absolute_ranges,
+        paper=True,
+        max_columns=max_columns,
+    ).splitlines()
     body_width = max((_visible_width(line) for line in body), default=0)
     for line in body:
         left = max(2, (width - body_width) // 2)
@@ -155,6 +212,48 @@ def highlight_sentence(text: str, highlight: str | None) -> str:
         return text
     start, end = ranges[0]
     return text[:start] + style(text[start:end], BOLD + CYAN) + text[end:]
+
+
+def _page_highlight_ranges(page: Page, absolute_range: tuple[int, int] | None) -> list[tuple[int, int]]:
+    if absolute_range is None:
+        return []
+    start, end = absolute_range
+    if end <= page.start_char or start >= page.end_char:
+        return []
+    if page.source_positions:
+        indexes = [
+            index
+            for index, source_position in enumerate(page.source_positions)
+            if source_position is not None and start <= source_position < end
+        ]
+    else:
+        local_start = max(0, start - page.start_char)
+        local_end = min(len(page.text), end - page.start_char)
+        indexes = list(range(local_start, max(local_start, local_end)))
+    if not indexes:
+        return []
+    ranges: list[tuple[int, int]] = []
+    range_start = previous = indexes[0]
+    for index in indexes[1:]:
+        if index != previous + 1:
+            ranges.append((range_start, previous + 1))
+            range_start = index
+        previous = index
+    ranges.append((range_start, previous + 1))
+    return ranges
+
+
+def _style_ranges(text: str, ranges: list[tuple[int, int]]) -> str:
+    if not ranges:
+        return text
+    output: list[str] = []
+    cursor = 0
+    for start, end in ranges:
+        output.append(text[cursor:start])
+        output.append(style(text[start:end], BOLD + CYAN))
+        cursor = end
+    output.append(text[cursor:])
+    return "".join(output)
 
 
 def _highlight_ranges(text: str, highlight: str | None) -> list[tuple[int, int]]:
@@ -190,12 +289,13 @@ def render_vertical(
     text: str,
     rows: int | None = None,
     highlight: str | None = None,
+    highlight_ranges: list[tuple[int, int]] | None = None,
     paper: bool = False,
     max_columns: int | None = None,
 ) -> str:
     _, terminal_rows = terminal_size()
     rows = rows or max(8, min(24, terminal_rows - 10))
-    chunks = _vertical_columns(text, rows, highlight)
+    chunks = _vertical_columns(text, rows, highlight, highlight_ranges)
     if not chunks:
         return ""
     chunks = chunks[: max_columns or 8]
@@ -215,8 +315,13 @@ def render_vertical(
     return warning + "\n" + "\n".join(output).rstrip()
 
 
-def _vertical_columns(text: str, rows: int, highlight: str | None) -> list[list[tuple[str, bool]]]:
-    ranges = _highlight_ranges(text, highlight)
+def _vertical_columns(
+    text: str,
+    rows: int,
+    highlight: str | None,
+    highlight_ranges: list[tuple[int, int]] | None = None,
+) -> list[list[tuple[str, bool]]]:
+    ranges = highlight_ranges if highlight_ranges is not None else _highlight_ranges(text, highlight)
     columns: list[list[tuple[str, bool]]] = []
     offset = 0
     previous_was_blank = False

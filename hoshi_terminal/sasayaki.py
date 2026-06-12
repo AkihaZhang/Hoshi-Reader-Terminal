@@ -136,6 +136,18 @@ def filter_sasayaki_text(text: str) -> str:
     return FILTER_RE.sub("", text)
 
 
+def filter_sasayaki_text_with_positions(text: str) -> tuple[str, list[int]]:
+    chars: list[str] = []
+    positions: list[int] = []
+    for index, char in enumerate(text):
+        filtered = FILTER_RE.sub("", unescape(char))
+        if not filtered:
+            continue
+        chars.extend(filtered)
+        positions.extend([index] * len(filtered))
+    return "".join(chars), positions
+
+
 def match_sasayaki(extracted: ExtractedBook, cues: list[SasayakiCue], search_window: int = 200) -> SasayakiMatchData:
     return match_sasayaki_chapters(extracted.chapters, cues, search_window=search_window)
 
@@ -344,6 +356,13 @@ class SasayakiPlayer:
         elapsed = max(0.0, now - self.started_at - self.paused_total)
         return self.base_position + elapsed * self.rate
 
+    def estimated_time(self) -> float | None:
+        if not self.is_playing():
+            return None
+        now = self.paused_at if self.paused and self.paused_at is not None else time.monotonic()
+        elapsed = max(0.0, now - self.started_at - self.paused_total)
+        return self.base_position + elapsed * self.rate
+
     def seek(self, seconds: float) -> bool:
         if not self.is_playing():
             return False
@@ -351,6 +370,7 @@ class SasayakiPlayer:
         if self.player_name == "mpv" and self.ipc_path is not None:
             try:
                 _send_mpv_command(self.ipc_path, ["set_property", "time-pos", target])
+                _send_mpv_command(self.ipc_path, ["set_property", "pause", False])
             except OSError:
                 return False
         else:

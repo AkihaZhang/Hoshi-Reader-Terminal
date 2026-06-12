@@ -6,11 +6,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
-dist/*
-!dist/*.zip
-!dist/*.tar.gz
-!dist/install.sh
-!dist/install.ps1
+dist/
 build/
 .hoshi-terminal/
 *.pyz

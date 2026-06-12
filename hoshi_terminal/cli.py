@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
 import json
 import os
 from pathlib import Path
@@ -52,6 +53,7 @@ from .sasayaki import (
     export_cue_audio,
     find_cue_for_page,
     filter_sasayaki_text,
+    filter_sasayaki_text_with_positions,
     format_time,
     is_audio_url,
     launch_audio,
@@ -79,7 +81,22 @@ from .sync import (
     sync_google_drive_book,
     sync_library,
 )
-from .terminal import BOLD, CYAN, DIM, GREEN, MAGENTA, RED, YELLOW, banner, clear_screen, style, terminal_size
+from .terminal import (
+    BOLD,
+    CYAN,
+    DIM,
+    GREEN,
+    MAGENTA,
+    RED,
+    YELLOW,
+    banner,
+    clear_screen,
+    draw_screen,
+    reader_screen,
+    set_cursor_visible,
+    style,
+    terminal_size,
+)
 from .updates import check_for_updates, format_update_info, format_update_install_result, install_latest_update
 
 
@@ -350,7 +367,17 @@ def cmd_read(args: argparse.Namespace) -> int:
     if args.print_only or not sys.stdin.isatty():
         print(render_page(title, pages[start_page], len(pages), vertical=args.vertical))
         return 0
-    return interactive_loop(title, text, pages, record, args.vertical, start_page=start_page, chapter_marks=chapter_marks)
+    return interactive_loop(
+        title,
+        text,
+        pages,
+        record,
+        args.vertical,
+        start_page=start_page,
+        chapter_marks=chapter_marks,
+        reader_width=args.width or _optional_int_setting(library, "reader_width"),
+        reader_lines=args.lines or _optional_int_setting(library, "reader_lines"),
+    )
 
 
 def cmd_lookup(args: argparse.Namespace) -> int:
@@ -1479,6 +1506,175 @@ def _flash_message(message: str, seconds: float = 0.45) -> None:
     time.sleep(seconds)
 
 
+class _ReaderSasayakiSession:
+    def __init__(self, library: Library, record: BookRecord | None) -> None:
+        self.library = library
+        self.record = record
+        self.data = library.sasayaki_for(record) if record is not None else None
+        self.match = _sasayaki_match_data(self.data)
+        self.playback = _sasayaki_playback(self.data) if self.data is not None else {}
+        self.audio_path = str(self.data.get("audio_path", "")) if self.data is not None else ""
+        self.matches = self.match.matches if self.match is not None else []
+        self.index_by_id = {cue.id: index for index, cue in enumerate(self.matches)}
+        self.time_starts = [cue.start_time for cue in self.matches]
+        self.ranges = self._build_ranges()
+        ordered_ranges = sorted(
+            (start, end, self.matches[index])
+            for index, value in enumerate(self.ranges)
+            if value is not None
+            for start, end in [value]
+        )
+        self.range_starts = [item[0] for item in ordered_ranges]
+        self.ordered_ranges = ordered_ranges
+
+    def _build_ranges(self) -> list[tuple[int, int] | None]:
+        if self.record is None or not self.matches:
+            return [None] * len(self.matches)
+        try:
+            chapters = extract_book(Path(self.record.stored_path)).chapters
+        except Exception:
+            return [None] * len(self.matches)
+        chapter_maps: list[tuple[int, list[int]]] = []
+        absolute_offset = 0
+        for chapter in chapters:
+            _, positions = filter_sasayaki_text_with_positions(chapter.text)
+            chapter_maps.append((absolute_offset, positions))
+            absolute_offset += len(chapter.text) + 2
+        ranges: list[tuple[int, int] | None] = []
+        for cue in self.matches:
+            if cue.chapter_index >= len(chapter_maps):
+                ranges.append(None)
+                continue
+            offset, positions = chapter_maps[cue.chapter_index]
+            start_index = cue.start
+            end_index = cue.start + max(1, cue.length) - 1
+            if start_index < 0 or start_index >= len(positions):
+                ranges.append(None)
+                continue
+            end_index = min(end_index, len(positions) - 1)
+            ranges.append((offset + positions[start_index], offset + positions[end_index] + 1))
+        return ranges
+
+    def range_for(self, cue: SasayakiMatch | None) -> tuple[int, int] | None:
+        if cue is None:
+            return None
+        index = self.index_by_id.get(cue.id)
+        return self.ranges[index] if index is not None else None
+
+    def cue_for_page(self, page: Page) -> SasayakiMatch | None:
+        if self.ordered_ranges:
+            index = max(0, bisect_right(self.range_starts, page.start_char) - 1)
+            while index < len(self.ordered_ranges):
+                start, end, cue = self.ordered_ranges[index]
+                if start >= page.end_char:
+                    break
+                if end > page.start_char:
+                    return cue
+                index += 1
+        if self.match is not None:
+            return find_cue_for_page(self.match, page.text)
+        return None
+
+    def cue_at(self, seconds: float) -> SasayakiMatch | None:
+        index = bisect_right(self.time_starts, seconds + 0.01) - 1
+        return self.matches[index] if index >= 0 else None
+
+    def current(self, page: Page, player: SasayakiPlayer, prefer_playback: bool = False) -> SasayakiMatch | None:
+        if not self.matches:
+            return None
+        if prefer_playback:
+            live = player.estimated_time()
+            if live is not None:
+                cue = self.cue_at(max(0.0, live - float(self.playback.get("delay", 0.0))))
+                if cue is not None:
+                    return cue
+            last = float(self.playback.get("lastPosition", 0.0))
+            if last > 0:
+                cue = self.cue_at(last)
+                if cue is not None:
+                    return cue
+        return self.cue_for_page(page) or self.cue_at(float(self.playback.get("lastPosition", 0.0))) or self.matches[0]
+
+    def play(
+        self,
+        page: Page,
+        player: SasayakiPlayer,
+        current_cue: SasayakiMatch | None,
+        direction: str = "current",
+    ) -> SasayakiMatch | None:
+        if not self.audio_path or not self.matches:
+            return None
+        cue = current_cue or self.current(page, player, prefer_playback=direction != "current")
+        if cue is None:
+            return None
+        index = self.index_by_id.get(cue.id, 0)
+        if direction == "next":
+            index = min(len(self.matches) - 1, index + 1)
+        elif direction == "previous":
+            index = max(0, index - 1)
+        cue = self.matches[index]
+        target = max(0.0, cue.start_time + float(self.playback.get("delay", 0.0)))
+        same_audio = str(player.audio_path or "") == self.audio_path
+        if not (player.is_playing() and same_audio and player.seek(target)):
+            player.play(self.audio_path, start_time=target, rate=float(self.playback.get("rate", 1.0)))
+        self.playback["lastPosition"] = cue.start_time
+        if self.data is not None:
+            self.data["playback"] = self.playback
+        return cue
+
+    def toggle(
+        self,
+        page: Page,
+        player: SasayakiPlayer,
+        current_cue: SasayakiMatch | None,
+    ) -> SasayakiMatch | None:
+        if player.is_playing():
+            player.toggle_pause()
+            return current_cue
+        return self.play(page, player, current_cue)
+
+    def tick(self, player: SasayakiPlayer, current_cue: SasayakiMatch | None) -> SasayakiMatch | None:
+        if not player.is_playing() or player.paused:
+            return None
+        position = player.estimated_time()
+        if position is None:
+            return None
+        cue = self.cue_at(max(0.0, position - float(self.playback.get("delay", 0.0))))
+        if cue is None or cue.id == (current_cue.id if current_cue else None):
+            return None
+        self.playback["lastPosition"] = cue.start_time
+        if self.data is not None:
+            self.data["playback"] = self.playback
+        return cue
+
+    def seek(self, player: SasayakiPlayer, delta_seconds: float) -> SasayakiMatch | None:
+        current = player.current_time()
+        if current is None:
+            return None
+        target = max(0.0, current + delta_seconds)
+        if not player.seek(target):
+            return None
+        cue_time = max(0.0, target - float(self.playback.get("delay", 0.0)))
+        cue = self.cue_at(cue_time)
+        self.playback["lastPosition"] = cue.start_time if cue is not None else cue_time
+        if self.data is not None:
+            self.data["playback"] = self.playback
+        return cue
+
+    def page_index_for_cue(self, pages: list[Page], cue: SasayakiMatch, current_index: int) -> int:
+        cue_range = self.range_for(cue)
+        if cue_range is not None:
+            return page_for_position(pages, cue_range[0])
+        return _page_index_for_cue(pages, cue, _sasayaki_chapter_offsets(self.record), current_index)
+
+    def status_text(self, cue: SasayakiMatch | None) -> str | None:
+        if cue is None:
+            return None
+        index = self.index_by_id.get(cue.id)
+        prefix = f"{index + 1}/{len(self.matches)} " if index is not None else ""
+        return f"{prefix}{format_time(cue.start_time)}  {cue.text}"
+
+
 def interactive_loop(
     title: str,
     text: str,
@@ -1487,157 +1683,160 @@ def interactive_loop(
     vertical: bool = False,
     start_page: int = 0,
     chapter_marks: list[tuple[str, int]] | None = None,
+    reader_width: int | None = None,
+    reader_lines: int | None = None,
 ) -> int:
     library = Library()
     page_index = start_page
     session_started = time.monotonic()
     session_start_char = pages[start_page].start_char if pages else 0
     sasayaki_player = SasayakiPlayer()
-    chapter_offsets = _sasayaki_chapter_offsets(record)
+    sasayaki = _ReaderSasayakiSession(library, record)
     current_cue: SasayakiMatch | None = None
     needs_render = True
+    last_size = terminal_size()
 
-    try:
-        while True:
-            page = pages[page_index]
-            current_match = None
-            if record is not None:
-                current_match = _sasayaki_match_data(library.sasayaki_for(record))
-            if needs_render:
-                display_cue = current_cue or (find_cue_for_page(current_match, page.text) if current_match else None)
-                print(clear_screen(), end="")
-                print(
-                    render_page(
-                        title,
-                        page,
-                        len(pages),
-                        vertical=vertical,
-                        highlight=display_cue.text if display_cue else None,
-                        sasayaki_status=_reader_sasayaki_status_text(display_cue, current_match),
+    with reader_screen():
+        try:
+            while True:
+                current_size = terminal_size()
+                if current_size != last_size:
+                    anchor_range = sasayaki.range_for(current_cue)
+                    anchor = anchor_range[0] if anchor_range is not None else pages[page_index].start_char
+                    pages = paginate(text, width=reader_width, lines_per_page=reader_lines)
+                    page_index = page_for_position(pages, anchor)
+                    last_size = current_size
+                    needs_render = True
+
+                page = pages[page_index]
+                if needs_render:
+                    display_cue = current_cue or sasayaki.cue_for_page(page)
+                    draw_screen(
+                        render_page(
+                            title,
+                            page,
+                            len(pages),
+                            vertical=vertical,
+                            highlight=display_cue.text if display_cue else None,
+                            highlight_range=sasayaki.range_for(display_cue),
+                            sasayaki_status=sasayaki.status_text(display_cue),
+                        )
                     )
-                )
-                needs_render = False
-            polling = 0.5 if sasayaki_player.is_playing() and not sasayaki_player.paused else None
-            prompt = "" if polling is not None else style("hoshi> ", CYAN)
-            command = _read_reader_command(prompt, timeout=polling)
-            tick_cue = _reader_sasayaki_tick(library, record, sasayaki_player, current_cue)
-            if tick_cue is not None:
-                current_cue = tick_cue
-                page_index = _page_index_for_cue(pages, tick_cue, chapter_offsets, page_index)
-                needs_render = True
+                    needs_render = False
+                command = _read_reader_command("", timeout=0.1, echo=False)
+                tick_cue = sasayaki.tick(sasayaki_player, current_cue)
+                if tick_cue is not None:
+                    current_cue = tick_cue
+                    page_index = sasayaki.page_index_for_cue(pages, tick_cue, page_index)
+                    needs_render = True
+                    if command is None:
+                        continue
+                    page = pages[page_index]
                 if command is None:
                     continue
-                page = pages[page_index]
-            if command is None:
-                continue
-            command = command.strip()
-            if command == "right":
-                page_index = min(len(pages) - 1, page_index + 1)
-                if not sasayaki_player.is_playing():
-                    current_cue = None
-            elif command == "left":
-                page_index = max(0, page_index - 1)
-                if not sasayaki_player.is_playing():
-                    current_cue = None
-            elif command == "down":
-                cue = _reader_sasayaki_play(library, record, page, sasayaki_player, direction="next")
-                if cue is not None:
-                    current_cue = cue
-                    page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
-            elif command == "up":
-                cue = _reader_sasayaki_play(library, record, page, sasayaki_player, direction="previous")
-                if cue is not None:
-                    current_cue = cue
-                    page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
-            elif command in {"", "space"}:
-                cue = _reader_sasayaki_toggle(library, record, page, sasayaki_player)
-                if cue is not None:
-                    current_cue = cue
-                    page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
-            elif command in {"[", "]", "{", "}"}:
-                step = _sasayaki_seek_step(library)
-                delta = -step if command == "[" else step if command == "]" else -30 if command == "{" else 30
-                cue = _reader_sasayaki_seek(library, record, sasayaki_player, float(delta))
-                if cue is not None:
-                    current_cue = cue
-                    page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
-            elif command.startswith("j "):
-                delta = _parse_relative_seconds(command[2:])
-                if delta is None:
-                    _flash_message("跳转输入格式：j 后输入 +5 或 -10。")
-                else:
-                    cue = _reader_sasayaki_seek(library, record, sasayaki_player, delta)
-                    if cue is not None:
-                        current_cue = cue
-                        page_index = _page_index_for_cue(pages, cue, chapter_offsets, page_index)
-            elif command in {"q", "quit", "exit"}:
-                break
-            elif command in {"r", "v"}:
-                vertical = not vertical
-            elif command == "y":
-                _reader_sasayaki_panel(library, record, page, sasayaki_player)
-            elif _is_toc_command(command):
-                page_index = _reader_toc_panel(
-                    title,
-                    pages,
-                    page_index,
-                    chapter_marks or [],
-                    initial_command=_toc_initial_command(command),
-                )
-                if not sasayaki_player.is_playing():
-                    current_cue = None
-            elif command.startswith("f "):
-                query = command[2:].strip()
-                page_index = _reader_search_panel(title, text, pages, page_index, initial_query=query)
-                if not sasayaki_player.is_playing():
-                    current_cue = None
-            elif command == "l":
-                page_index = _reader_highlights_panel(library, record, text, pages, page_index)
-                if not sasayaki_player.is_playing():
-                    current_cue = None
-            elif command.startswith("/"):
-                word = command[1:].strip()
-                if word:
-                    _show_lookup(word, library)
-            elif command.startswith("a "):
-                word = command[2:].strip()
-                sentence = sentence_around(page.text, word)
-                sentence_audio = _reader_sentence_audio(library, record, page, sentence, current_cue)
-                print(
-                    mine_word(
-                        word,
-                        sentence=sentence,
-                        sentence_audio_path=str(sentence_audio or ""),
-                        document_title=record.title if record else title,
-                    )
-                )
-                _read_input(style("按 Enter 继续", DIM))
-            elif command.startswith("h"):
-                color, note = _parse_highlight_command(command[1:].strip())
-                if record is None:
-                    print("直接阅读文件时没有书架记录，无法保存划线。")
-                else:
-                    library.add_highlight(record, page.text, note, position=page.start_char, color=color)
-                    color_label, color_code = HIGHLIGHT_COLORS[color]
-                    print(style("已划线当前页", GREEN), style(color_label, color_code))
-                _read_input(style("按 Enter 继续", DIM))
-            elif command == "s":
-                chars = max(0, page.end_char - session_start_char)
-                seconds = max(0.1, time.monotonic() - session_started)
-                print(f"本次阅读：{chars} 字符，{seconds / 60:.1f} 分钟，{int(chars / (seconds / 60))} 字符/分钟")
-                _read_input(style("按 Enter 继续", DIM))
-            elif command.startswith("g "):
-                page_number = _parse_page_number(command[2:], len(pages))
-                if page_number is not None:
-                    page_index = page_number
+                command = command.strip()
+                if command == "right":
+                    page_index = min(len(pages) - 1, page_index + 1)
                     if not sasayaki_player.is_playing():
                         current_cue = None
-            else:
-                print("未知命令。")
-                _read_input(style("按 Enter 继续", DIM))
-            needs_render = True
-    finally:
-        sasayaki_player.stop()
+                elif command == "left":
+                    page_index = max(0, page_index - 1)
+                    if not sasayaki_player.is_playing():
+                        current_cue = None
+                elif command == "down":
+                    cue = sasayaki.play(page, sasayaki_player, current_cue, direction="next")
+                    if cue is not None:
+                        current_cue = cue
+                        page_index = sasayaki.page_index_for_cue(pages, cue, page_index)
+                elif command == "up":
+                    cue = sasayaki.play(page, sasayaki_player, current_cue, direction="previous")
+                    if cue is not None:
+                        current_cue = cue
+                        page_index = sasayaki.page_index_for_cue(pages, cue, page_index)
+                elif command in {"", "space"}:
+                    cue = sasayaki.toggle(page, sasayaki_player, current_cue)
+                    if cue is not None:
+                        current_cue = cue
+                        page_index = sasayaki.page_index_for_cue(pages, cue, page_index)
+                elif command in {"[", "]", "{", "}"}:
+                    step = _sasayaki_seek_step(library)
+                    delta = -step if command == "[" else step if command == "]" else -30 if command == "{" else 30
+                    cue = sasayaki.seek(sasayaki_player, float(delta))
+                    if cue is not None:
+                        current_cue = cue
+                        page_index = sasayaki.page_index_for_cue(pages, cue, page_index)
+                elif command.startswith("j "):
+                    delta = _parse_relative_seconds(command[2:])
+                    if delta is not None:
+                        cue = sasayaki.seek(sasayaki_player, delta)
+                        if cue is not None:
+                            current_cue = cue
+                            page_index = sasayaki.page_index_for_cue(pages, cue, page_index)
+                elif command in {"q", "quit", "exit"}:
+                    break
+                elif command in {"r", "v"}:
+                    vertical = not vertical
+                elif command == "y":
+                    _reader_sasayaki_panel(library, record, page, sasayaki_player)
+                elif _is_toc_command(command):
+                    page_index = _reader_toc_panel(
+                        title,
+                        pages,
+                        page_index,
+                        chapter_marks or [],
+                        initial_command=_toc_initial_command(command),
+                    )
+                    if not sasayaki_player.is_playing():
+                        current_cue = None
+                elif command.startswith("f "):
+                    query = command[2:].strip()
+                    page_index = _reader_search_panel(title, text, pages, page_index, initial_query=query)
+                    if not sasayaki_player.is_playing():
+                        current_cue = None
+                elif command == "l":
+                    page_index = _reader_highlights_panel(library, record, text, pages, page_index)
+                    if not sasayaki_player.is_playing():
+                        current_cue = None
+                elif command.startswith("/"):
+                    word = command[1:].strip()
+                    if word:
+                        _show_lookup(word, library)
+                elif command.startswith("a "):
+                    word = command[2:].strip()
+                    sentence = sentence_around(page.text, word)
+                    sentence_audio = _reader_sentence_audio(library, record, page, sentence, current_cue)
+                    print(
+                        mine_word(
+                            word,
+                            sentence=sentence,
+                            sentence_audio_path=str(sentence_audio or ""),
+                            document_title=record.title if record else title,
+                        )
+                    )
+                    _read_input(style("按 Enter 继续", DIM))
+                elif command.startswith("h"):
+                    color, note = _parse_highlight_command(command[1:].strip())
+                    if record is None:
+                        print("直接阅读文件时没有书架记录，无法保存划线。")
+                    else:
+                        library.add_highlight(record, page.text, note, position=page.start_char, color=color)
+                        color_label, color_code = HIGHLIGHT_COLORS[color]
+                        print(style("已划线当前页", GREEN), style(color_label, color_code))
+                    _read_input(style("按 Enter 继续", DIM))
+                elif command == "s":
+                    chars = max(0, page.end_char - session_start_char)
+                    seconds = max(0.1, time.monotonic() - session_started)
+                    print(f"本次阅读：{chars} 字符，{seconds / 60:.1f} 分钟，{int(chars / (seconds / 60))} 字符/分钟")
+                    _read_input(style("按 Enter 继续", DIM))
+                elif command.startswith("g "):
+                    page_number = _parse_page_number(command[2:], len(pages))
+                    if page_number is not None:
+                        page_index = page_number
+                        if not sasayaki_player.is_playing():
+                            current_cue = None
+                needs_render = True
+        finally:
+            sasayaki_player.stop()
 
     if record is not None:
         end_char = pages[page_index].start_char
@@ -3517,36 +3716,48 @@ def _read_input(prompt: str = "") -> str:
         raise GracefulExit from exc
 
 
-def _read_reader_command(prompt: str = "", timeout: float | None = None) -> str | None:
+def _read_reader_command(prompt: str = "", timeout: float | None = None, echo: bool = True) -> str | None:
     if not sys.stdin.isatty():
         return _read_input(prompt)
-    print(prompt, end="", flush=True)
+    if echo:
+        print(prompt, end="", flush=True)
     key = _read_single_key(timeout=timeout)
     if key is None:
-        if prompt:
+        if echo and prompt:
             print("\r\033[K", end="", flush=True)
         return None
     command = _normalize_reader_key(key)
     if command in {"right", "down", "left", "up", "space", ""}:
-        print()
+        if echo:
+            print()
         return command
     if command in {"r", "v", "y", "c", "t", "l", "s", "q", "[", "]", "{", "}"}:
-        print(command)
+        if echo:
+            print(command)
         return command
     if command == "/":
-        return "/" + _read_input("/")
+        return "/" + _read_reader_line("/")
     if command == "a":
-        return "a " + _read_input("a ")
+        return "a " + _read_reader_line("a ")
     if command == "f":
-        return "f " + _read_input("f ")
+        return "f " + _read_reader_line("f ")
     if command == "h":
-        return "h " + _read_input("h ")
+        return "h " + _read_reader_line("h ")
     if command == "g":
-        return "g " + _read_input("g ")
+        return "g " + _read_reader_line("g ")
     if command == "j":
-        return "j " + _read_input("j ")
-    print(command)
+        return "j " + _read_reader_line("j ")
+    if echo:
+        print(command)
     return command
+
+
+def _read_reader_line(prompt: str) -> str:
+    set_cursor_visible(True)
+    try:
+        return _read_input(prompt)
+    finally:
+        set_cursor_visible(False)
 
 
 def _read_toc_command(prompt: str = "") -> str:
@@ -3646,10 +3857,15 @@ def _read_single_key(timeout: float | None = None) -> str | None:
             return None
         data = os.read(fd, 1)
         if data == b"\x1b":
-            for _ in range(5):
-                if not select.select([fd], [], [], 0.1)[0]:
+            for _ in range(7):
+                if not select.select([fd], [], [], 0.03)[0]:
                     break
-                data += os.read(fd, 1)
+                next_byte = os.read(fd, 1)
+                data += next_byte
+                if len(data) == 2 and next_byte not in {b"[", b"O"}:
+                    break
+                if len(data) >= 3 and 0x40 <= next_byte[0] <= 0x7E:
+                    break
         return data.decode(errors="ignore")
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)

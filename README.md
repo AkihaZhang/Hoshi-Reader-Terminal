@@ -57,15 +57,9 @@ Then run:
 hoshi
 ```
 
-Portable packages are available from [GitHub Releases](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/tag/v0.1.20):
+All systems use the same `hoshi-terminal.pyz` from the [latest GitHub Release](https://github.com/AkihaZhang/Hoshi-Reader-Terminal/releases/latest). The two installers only handle the different shell and PATH conventions.
 
-| OS | Package |
-| --- | --- |
-| Windows | `Hoshi-Reader-Terminal-0.1.20-windows.zip` |
-| macOS | `Hoshi-Reader-Terminal-0.1.20-macos.tar.gz` |
-| Linux | `Hoshi-Reader-Terminal-0.1.20-linux.tar.gz` |
-
-Python 3.10+ is required.
+Python 3.10+ is required; the release asset is a cross-platform Python application archive, not a bundled Python runtime.
 
 ## Common Commands
 

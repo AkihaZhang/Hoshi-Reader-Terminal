@@ -13,6 +13,7 @@ from hoshi_terminal.sasayaki import (
     ffplay_atempo_filter,
     find_cue_for_page,
     filter_sasayaki_text,
+    filter_sasayaki_text_with_positions,
     format_time,
     match_rate_text,
     match_sasayaki,
@@ -47,6 +48,12 @@ class SasayakiTests(unittest.TestCase):
     def test_filter_removes_ruby_and_keeps_compatibility_ideographs(self) -> None:
         text = "<body><ruby>猪<rt>ちよ</rt>八<rt>はつ</rt>戒<rt>かい</rt></ruby>だ。</body>"
         self.assertEqual(filter_sasayaki_text(text), "猪八戒だ")
+
+    def test_filter_positions_map_filtered_text_to_source(self) -> None:
+        filtered, positions = filter_sasayaki_text_with_positions("私 は「星」を読む。")
+
+        self.assertEqual(filtered, "私は星を読む")
+        self.assertEqual(positions[filtered.index("星")], 4)
 
     def test_match_skips_short_star_cues_and_keeps_chapter_offsets(self) -> None:
         book = ExtractedBook(
@@ -172,6 +179,28 @@ class SasayakiTests(unittest.TestCase):
             sasayaki_module._open_audio_process = original_open_audio_process  # type: ignore[assignment]
 
         self.assertEqual(calls[-1], (30.0, None))
+
+    def test_player_seek_reuses_running_mpv_process(self) -> None:
+        class FakeProcess:
+            def poll(self) -> int | None:
+                return None
+
+        commands: list[list[object]] = []
+        original_send = sasayaki_module._send_mpv_command
+        try:
+            sasayaki_module._send_mpv_command = lambda path, command: commands.append(command)  # type: ignore[assignment]
+            player = SasayakiPlayer()
+            player.process = FakeProcess()  # type: ignore[assignment]
+            player.player_name = "mpv"
+            player.ipc_path = Path("/tmp/fake-mpv.sock")
+            player.audio_path = "audio.m4b"
+
+            self.assertTrue(player.seek(42.5))
+        finally:
+            sasayaki_module._send_mpv_command = original_send  # type: ignore[assignment]
+
+        self.assertEqual(commands, [["set_property", "time-pos", 42.5], ["set_property", "pause", False]])
+        self.assertIsNotNone(player.process)
 
 
 if __name__ == "__main__":
